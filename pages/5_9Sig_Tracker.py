@@ -95,7 +95,8 @@ def live_view():
         st.caption(f"• {note}")
 
     # -- Detail tabs --
-    tab_metrics, tab_alloc, tab_hold = st.tabs(["Sheet metrics", "Trade allocation", "Holdings"])
+    tab_metrics, tab_alloc, tab_hold, tab_qlog = st.tabs(
+        ["Sheet metrics", "Trade allocation", "Holdings", "Quarterly log"])
     with tab_metrics:
         mdf = nine_sig.dashboard_metrics(store)
         if mdf.empty:
@@ -123,6 +124,16 @@ def live_view():
             mv = pd.to_numeric(hdf["Market Value"], errors="coerce").fillna(0.0)
             hdf = hdf[mv.abs() > 1e-9]
         st.dataframe(hdf, use_container_width=True, height=380)
+
+    with tab_qlog:
+        qdf = store.load_table("Quarterly_Log")
+        if qdf.empty:
+            st.info("No Quarterly_Log data imported.")
+        else:
+            # Drop fully-empty columns/rows for readability.
+            qdf = qdf.dropna(axis=1, how="all").dropna(axis=0, how="all")
+            st.caption(f"{len(qdf)} settlement row(s), {qdf.shape[1]} columns.")
+            st.dataframe(qdf, use_container_width=True, height=380)
 
 
 live_view()

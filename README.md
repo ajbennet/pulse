@@ -146,7 +146,8 @@ Opens a local browser app with four pages:
 | **Portfolio** | Create paper portfolios; set holdings/cash or record BUY/SELL transactions; see current weights vs. target, drift, and realized/unrealized P&L. |
 | **Signals** | Evaluate the live LDR rules against your holdings and the latest close; get recommended buy/sell trades; optionally apply them as paper trades. |
 | **Alerts** | Surface stop / re-entry / drift alerts; dispatch them via the notifier (default logs to `logs/alerts.log`). |
-| **9-Sig Tracker** | Reads the imported 9-Sig workbook from SQLite and recomputes the quarterly signal (9% line, hold band, 30-Down, spike-reset, throttles) with a per-account trade allocation. Toggle live prices. |
+| **9-Sig Tracker** | Reads the imported 9-Sig workbook from SQLite and recomputes the quarterly signal (9% line, hold band, 30-Down, spike-reset, throttles) with a per-account trade allocation. Toggle live prices. Tabs for sheet metrics, holdings (hides zero-value rows), and the quarterly log. |
+| **Transactions** | Editable ledger (seeded from the sheet) plus statement import: upload a Robinhood/Fidelity/TradeStation statement (CSV or PDF) → extract only strategy-ticker trades (TQQQ/AGG/BRK.B/UGL) + contributions/income → review & edit → commit, with deduplication. Accounts mapped by name + last-4. |
 
 ## Architecture & extending
 

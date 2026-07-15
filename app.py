@@ -35,7 +35,8 @@ Use the pages in the sidebar:
 | **Portfolio** | Track a manual / paper portfolio: holdings, cash, transactions, weights, and P&L. |
 | **Signals** | Apply the live LDR rules to your holdings and get recommended buy/sell trades. |
 | **Alerts** | See stop / re-entry / drift alerts for your portfolio. |
-| **9-Sig Tracker** | Your imported 9-Sig strategy: multi-account holdings, the quarterly signal, and per-account trade allocation. |
+| **9-Sig Tracker** | Your imported 9-Sig strategy: multi-account holdings, the quarterly signal, per-account trade allocation, sheet metrics, and quarterly log. |
+| **Transactions** | Editable transaction ledger; import broker statements (CSV/PDF) → extract strategy-ticker trades → review → commit (deduplicated). |
 
 > ⚠️ Research and portfolio-assistance tool only — **not investment advice.**
 Leveraged ETFs carry significant risk. See the README for the full caveats,

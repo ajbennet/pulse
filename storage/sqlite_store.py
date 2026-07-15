@@ -46,6 +46,41 @@ CREATE TABLE IF NOT EXISTS kv (
     updated_at TEXT
 );
 
+-- Accounts: identified by name + last-4 of the account number (broker-agnostic).
+CREATE TABLE IF NOT EXISTS accounts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    last4      TEXT,               -- last 4 digits of the brokerage account number
+    broker     TEXT,              -- robinhood | fidelity | tradestation | ...
+    legacy_id  TEXT,              -- original sheet A1..A10 (for linking imported data)
+    active     INTEGER DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_last4 ON accounts(last4) WHERE last4 IS NOT NULL;
+
+-- Writable transactions (seeded from the sheet, then appended from statements).
+CREATE TABLE IF NOT EXISTS transactions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                TEXT,
+    account             TEXT,      -- account name
+    account_last4       TEXT,
+    ticker              TEXT,
+    action              TEXT,      -- BUY | SELL | CONTRIBUTION | DIVIDEND | INTEREST | ...
+    shares              REAL,
+    price               REAL,
+    fees                REAL,
+    cash_flow           REAL,
+    contribution_amount REAL,
+    trade_value         REAL,
+    quarter             TEXT,
+    include_9sig        INTEGER DEFAULT 1,
+    notes               TEXT,
+    source              TEXT,      -- sheet | robinhood | fidelity | tradestation | manual
+    dedup_key           TEXT UNIQUE,
+    created_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_txn_date ON transactions(date);
+CREATE INDEX IF NOT EXISTS idx_txn_ticker ON transactions(ticker);
+
 -- Long-format storage for tabular tabs (Transactions, Holdings, prices, ...).
 -- Lossless and schema-agnostic: any table can be reconstructed to a DataFrame.
 CREATE TABLE IF NOT EXISTS sheet_cells (
@@ -197,3 +232,66 @@ class SqliteStore:
     def delete(self, key: str) -> None:
         with self._conn() as c:
             c.execute("DELETE FROM kv WHERE key = ?", (key,))
+
+    # ------------------------------------------------------------------
+    # Transactions (writable)
+    # ------------------------------------------------------------------
+    _TXN_FIELDS = ["date", "account", "account_last4", "ticker", "action", "shares",
+                   "price", "fees", "cash_flow", "contribution_amount", "trade_value",
+                   "quarter", "include_9sig", "notes", "source", "dedup_key", "created_at"]
+
+    def insert_transaction(self, row: dict) -> bool:
+        """Insert a transaction; returns False if a duplicate (dedup_key) exists."""
+        cols = [f for f in self._TXN_FIELDS if f in row]
+        placeholders = ",".join("?" for _ in cols)
+        with self._conn() as c:
+            cur = c.execute(
+                f"INSERT OR IGNORE INTO transactions ({','.join(cols)}) VALUES ({placeholders})",
+                [row[c_] for c_ in cols],
+            )
+            return cur.rowcount > 0
+
+    def update_transaction(self, txn_id: int, fields: dict) -> None:
+        cols = [f for f in self._TXN_FIELDS if f in fields]
+        if not cols:
+            return
+        with self._conn() as c:
+            c.execute(f"UPDATE transactions SET {','.join(f'{f}=?' for f in cols)} WHERE id=?",
+                      [fields[f] for f in cols] + [txn_id])
+
+    def delete_transaction(self, txn_id: int) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM transactions WHERE id=?", (txn_id,))
+
+    def list_transactions(self) -> List[sqlite3.Row]:
+        with self._conn() as c:
+            return c.execute("SELECT * FROM transactions ORDER BY date, id").fetchall()
+
+    def count_transactions(self) -> int:
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # Accounts
+    # ------------------------------------------------------------------
+    def upsert_account(self, name: str, last4: str = None, broker: str = None,
+                       legacy_id: str = None) -> None:
+        with self._conn() as c:
+            existing = None
+            if last4:
+                existing = c.execute("SELECT id FROM accounts WHERE last4=?", (last4,)).fetchone()
+            if existing is None:
+                existing = c.execute(
+                    "SELECT id FROM accounts WHERE name=? AND (last4 IS NULL OR last4=?)",
+                    (name, last4)).fetchone()
+            if existing:
+                c.execute("UPDATE accounts SET name=?, last4=COALESCE(?,last4), "
+                          "broker=COALESCE(?,broker), legacy_id=COALESCE(?,legacy_id) WHERE id=?",
+                          (name, last4, broker, legacy_id, existing["id"]))
+            else:
+                c.execute("INSERT INTO accounts (name,last4,broker,legacy_id) VALUES (?,?,?,?)",
+                          (name, last4, broker, legacy_id))
+
+    def list_accounts(self) -> List[sqlite3.Row]:
+        with self._conn() as c:
+            return c.execute("SELECT * FROM accounts ORDER BY name").fetchall()
