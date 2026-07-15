@@ -95,7 +95,19 @@ def live_view():
         st.caption(f"• {note}")
 
     # -- Detail tabs --
-    tab_alloc, tab_hold = st.tabs(["Trade allocation", "Holdings"])
+    tab_metrics, tab_alloc, tab_hold = st.tabs(["Sheet metrics", "Trade allocation", "Holdings"])
+    with tab_metrics:
+        mdf = nine_sig.dashboard_metrics(store)
+        if mdf.empty:
+            st.info("No dashboard metrics imported yet.")
+        else:
+            st.caption(f"All {len(mdf)} metrics from the imported Dashboard tab "
+                       f"(captured {mdf.attrs.get('captured_at') or '—'}).")
+            for section in mdf["Section"].unique():
+                sec = mdf[mdf["Section"] == section]
+                st.markdown(f"**{section or 'Other'}**")
+                st.dataframe(sec[["Metric", "Value"]], use_container_width=True,
+                             hide_index=True)
     with tab_alloc:
         st.caption("Total TQQQ trade split across accounts "
                    f"(pro-rata to {'reserves' if sig['action'].startswith('BUY') else 'TQQQ'}).")
@@ -105,7 +117,12 @@ def live_view():
             use_container_width=True,
         )
     with tab_hold:
-        st.dataframe(nine_sig.holdings(store), use_container_width=True, height=380)
+        hdf = nine_sig.holdings(store)
+        show_zero = st.checkbox("Show zero-value rows", value=False, key="show_zero_holdings")
+        if not show_zero and "Market Value" in hdf.columns:
+            mv = pd.to_numeric(hdf["Market Value"], errors="coerce").fillna(0.0)
+            hdf = hdf[mv.abs() > 1e-9]
+        st.dataframe(hdf, use_container_width=True, height=380)
 
 
 live_view()

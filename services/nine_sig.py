@@ -162,6 +162,32 @@ def holdings(store: Optional[SqliteStore] = None) -> pd.DataFrame:
     return store.load_table("Holdings_By_Account")
 
 
+def dashboard_metrics(store: Optional[SqliteStore] = None) -> pd.DataFrame:
+    """
+    The full set of imported dashboard metrics (latest 'dashboard' import,
+    case-insensitive), as a DataFrame: Section, Metric, Value, Number.
+    """
+    store = store or SqliteStore()
+    with store._conn() as c:
+        imp = c.execute(
+            "SELECT id, imported_at, captured_at FROM sheet_imports "
+            "WHERE lower(tab) = 'dashboard' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not imp:
+            return pd.DataFrame(columns=["Section", "Metric", "Value", "Number"])
+        rows = c.execute(
+            "SELECT section, key, value_text, value_num FROM metrics "
+            "WHERE import_id = ? ORDER BY id", (imp["id"],)
+        ).fetchall()
+    df = pd.DataFrame(
+        [(r["section"], r["key"], r["value_text"], r["value_num"]) for r in rows],
+        columns=["Section", "Metric", "Value", "Number"],
+    )
+    df.attrs["imported_at"] = imp["imported_at"]
+    df.attrs["captured_at"] = imp["captured_at"]
+    return df
+
+
 def portfolio_snapshot(store: Optional[SqliteStore] = None,
                        prices: Optional[Dict[str, float]] = None) -> Dict:
     """
