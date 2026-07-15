@@ -82,6 +82,9 @@ def dedup_key(row: Dict) -> str:
 
 def _clean_row(row: Dict, source: str) -> Dict:
     out = dict(row)
+    # A per-row account hint (e.g. Robinhood multi-account PDF) fills account.
+    if not _s(out.get("account")) and _s(out.get("account_hint")):
+        out["account"] = _s(out.get("account_hint"))
     out["ticker"] = normalize_ticker(row.get("ticker"))
     out["date"] = _norm_date(row.get("date"))
     out["action"] = _s(row.get("action")).upper()

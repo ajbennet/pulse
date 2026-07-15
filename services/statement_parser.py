@@ -23,14 +23,18 @@ from typing import Callable, Dict, List, Optional
 # ----------------------------------------------------------------------
 # Action normalization
 # ----------------------------------------------------------------------
+# Order matters — more specific phrases first.
 _ACTION_RULES = [
-    ("BUY", ("buy", "bought", "purchase", "reinvest shares")),
-    ("SELL", ("sell", "sold", "redemption", "redeem")),
-    ("DIVIDEND", ("dividend", "reinvest dividend", "div ")),
+    ("DIVIDEND", ("dividend received", "dividend", "div ")),
+    ("REINVEST", ("reinvestment", "reinvest")),
+    ("BUY", ("you bought", "bought", "buy", "purchase")),
+    ("SELL", ("you sold", "sold", "sell", "redemption", "redeem")),
     ("INTEREST", ("interest",)),
     ("CONTRIBUTION", ("contribution", "deposit", "ach in", "transfer in",
                       "electronic funds transfer received", "funds received")),
-    ("WITHDRAWAL", ("withdrawal", "ach out", "transfer out", "debit")),
+    ("WITHDRAWAL", ("withdrawal", "normal distr", "distribution", "ach out",
+                    "transfer out", "debit")),
+    ("EXCHANGE", ("exchange in", "exchange out", "exchange")),
 ]
 
 
@@ -50,15 +54,22 @@ def normalize_action(text: str) -> str:
 _COLUMN_ALIASES = [
     ("date", ["trade date", "run date", "settlement date", "activity date",
               "process date", "as of date", "date"]),
+    ("account_number", ["account number", "account #", "acct number", "acct #", "account no"]),
+    ("account", ["account name", "account"]),
     ("shares", ["quantity", "share quantity", "shares", "qty", "units"]),
     ("price", ["average price", "execution price", "share price", "price ($)", "price"]),
-    ("fees", ["fees & comm", "commission", "reg fee", "fees", "fee"]),
+    ("fees", ["fees & comm", "reg fee", "fees ($)", "fees", "fee", "commission"]),
     ("cash_flow", ["net amount", "cash flow", "amount ($)", "net amount ($)", "amount",
                    "value", "total"]),
     ("ticker", ["symbol", "ticker", "instrument", "security", "description"]),
     ("action", ["trans code", "transaction code", "transaction type", "action",
                 "activity type", "transaction", "type", "description"]),
 ]
+
+
+def _last4(s: str) -> Optional[str]:
+    digits = re.sub(r"\D", "", str(s or ""))
+    return digits[-4:] if len(digits) >= 4 else None
 
 
 def _match_columns(headers: List[str]) -> Dict[str, str]:
@@ -145,14 +156,17 @@ def parse_csv(data: bytes) -> Dict:
             return rec.get(col, "") if col else ""
         symbol_raw = g("ticker")
         action = normalize_action(g("action"))
+        shares = _num(g("shares"))
         row = {
             "date": g("date").strip(),
             "ticker": _extract_ticker(symbol_raw),
             "action": action,
-            "shares": _num(g("shares")),
+            "shares": abs(shares) if shares is not None else None,
             "price": _num(g("price")),
             "fees": _num(g("fees")),
             "cash_flow": _num(g("cash_flow")),
+            "account_hint": g("account").strip(),
+            "account_last4": _last4(g("account_number")),
             "notes": (g("action") or "").strip()[:120],
         }
         if not row["date"] and row["shares"] is None and row["cash_flow"] is None:
@@ -217,9 +231,116 @@ def detect_broker(filename: str, sample_text: str = "") -> str:
     return "unknown"
 
 
-# Broker-specific adapters get registered here once real samples exist:
-#   BROKER_ADAPTERS["robinhood"] = lambda data, fmt: {...}
-BROKER_ADAPTERS: Dict[str, Callable] = {}
+# Map broker security names -> strategy tickers (order matters; check specific first).
+_SECURITY_TO_TICKER = [
+    ("ultrapro qqq", "TQQQ"),          # ProShares UltraPro QQQ (3x)
+    ("aggregate bond", "AGG"),         # iShares Core US Aggregate Bond ETF
+    ("berkshire hathaway", "BRK.B"),
+    ("ultra gold", "UGL"),             # ProShares Ultra Gold
+]
+
+
+def map_security(name: str) -> str:
+    low = (name or "").lower()
+    for key, ticker in _SECURITY_TO_TICKER:
+        if key in low:
+            return ticker
+    return (name or "").strip()
+
+
+def _map_rh_account(text: str) -> str:
+    t = (text or "").lower()
+    if "roth" in t:
+        return "Robinhood Roth IRA"
+    if "traditional" in t:
+        return "Robinhood Traditional IRA"
+    if "custodial" in t or "utma" in t:
+        return "Robinhood UTMA"
+    if "individual" in t or "regular" in t:
+        return "Robinhood"
+    return "Robinhood"
+
+
+import datetime as _dt
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+
+def _rh_date(mon: str, day: str, asof) -> str:
+    """Robinhood shows 'Jul 4' (no year). Infer year from the as-of date."""
+    ay, am, ad = asof
+    m = _MONTHS.get(mon, 1)
+    d = int(day)
+    year = ay if (m, d) <= (am, ad) else ay - 1
+    try:
+        return _dt.date(year, m, d).isoformat()
+    except ValueError:
+        return f"{year}-{m:02d}-{d:02d}"
+
+
+_RH_TRADE = re.compile(r"^(.*?) (limit|market) (buy|sell) \$([\d,]+\.\d{2})$")
+_RH_DETAIL = re.compile(r"^(.*?) · ([A-Z][a-z]{2}) (\d{1,2}) ([\d.]+) shares at \$([\d.]+)")
+
+
+def parse_robinhood(data: bytes, fmt: str) -> Dict:
+    """
+    Robinhood adapter. CSV exports go through the generic parser; the History-page
+    PDF is line-block text, parsed here for BUY/SELL trades (mapped to tickers,
+    with per-row account from the account/date line). Cash/dividend rows and
+    canceled orders are skipped for now.
+    """
+    if fmt != "pdf":
+        return parse_csv(data)
+    try:
+        import pdfplumber
+    except ImportError:
+        return {"rows": [], "warnings": ["PDF parsing needs pdfplumber."]}
+
+    lines: List[str] = []
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        for page in pdf.pages:
+            lines.extend((page.extract_text() or "").split("\n"))
+
+    asof = (2000 + _dt.date.today().year % 100, 12, 31)
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2})\b", lines[0] if lines else "")
+    if m:
+        asof = (2000 + int(m.group(3)), int(m.group(1)), int(m.group(2)))
+
+    rows, warnings = [], []
+    pending = None
+    for ln in lines:
+        ln = ln.strip()
+        mt = _RH_TRADE.match(ln)
+        if mt:
+            pending = {"security": mt.group(1).strip(), "side": mt.group(3),
+                       "amount": float(mt.group(4).replace(",", ""))}
+            continue
+        if pending:
+            md = _RH_DETAIL.match(ln)
+            if md:
+                side = pending["side"]
+                rows.append({
+                    "date": _rh_date(md.group(2), md.group(3), asof),
+                    "ticker": map_security(pending["security"]),
+                    "action": side.upper(),
+                    "shares": float(md.group(4)),
+                    "price": float(md.group(5)),
+                    "fees": 0.0,
+                    "cash_flow": (pending["amount"] if side == "sell" else -pending["amount"]),
+                    "account_hint": _map_rh_account(md.group(1)),
+                    "notes": f"robinhood {pending['security']}",
+                })
+                pending = None
+    warnings.append("Robinhood PDF: extracted trades only (dividends/cash/contributions "
+                    "and canceled orders are not imported).")
+    return {"rows": rows, "warnings": warnings}
+
+
+# Broker adapters registry. Signature: adapter(data: bytes, fmt: str) -> {rows, warnings}.
+BROKER_ADAPTERS: Dict[str, Callable] = {
+    "robinhood": parse_robinhood,
+}
 
 
 def last4_from_text(text: str) -> Optional[str]:

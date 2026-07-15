@@ -116,26 +116,39 @@ with import_tab:
                      "adapter is likely needed — share this sample and I'll add it.")
         else:
             accounts = store.list_accounts()
-            names = [a["name"] for a in accounts] or ["(unassigned)"]
+            names = [a["name"] for a in accounts]
             csel1, csel2 = st.columns(2)
-            acct_name = csel1.selectbox("Assign all rows to account", names)
-            last4 = csel2.text_input("Account last-4", value=meta.get("last4") or "")
+            default_acct = csel1.selectbox(
+                "Default account (for rows without one)", names or ["(unassigned)"])
+            last4 = csel2.text_input("Account last-4 (optional)", value=meta.get("last4") or "")
 
-            review = pd.DataFrame(st.session_state["imp_rows"])[
-                ["date", "ticker", "action", "shares", "price", "fees", "cash_flow", "notes"]]
+            # Pre-fill a per-row account from the parser's hint (multi-account files),
+            # falling back to the default selection.
+            src = pd.DataFrame(st.session_state["imp_rows"])
+            src["account"] = src.get("account_hint", pd.Series(dtype=str)).fillna("")
+            src.loc[src["account"] == "", "account"] = default_acct
+            review = src[["date", "account", "ticker", "action", "shares", "price",
+                          "fees", "cash_flow", "notes"]]
+
+            acct_opts = sorted(set(names) | set(review["account"].dropna()))
             confirmed = st.data_editor(
                 review, num_rows="dynamic", use_container_width=True, height=320,
                 key="imp_editor",
-                column_config={"action": st.column_config.SelectboxColumn(
-                    "action", options=["BUY", "SELL", "CONTRIBUTION", "WITHDRAWAL",
-                                       "DIVIDEND", "INTEREST"])},
+                column_config={
+                    "account": st.column_config.SelectboxColumn("account", options=acct_opts),
+                    "action": st.column_config.SelectboxColumn(
+                        "action", options=["BUY", "SELL", "CONTRIBUTION", "WITHDRAWAL",
+                                           "DIVIDEND", "INTEREST"]),
+                },
             )
+            st.caption("Accounts are pre-filled per row from the statement. Review the "
+                       "custodial/UTMA rows — exclude any account not part of the strategy.")
 
             if st.button("✅ Confirm & commit", type="primary"):
                 rows = confirmed.to_dict("records")
                 for r in rows:
-                    r["account"] = acct_name
-                    r["account_last4"] = last4 or None
+                    if last4:
+                        r["account_last4"] = last4
                 res = tx.import_rows(rows, source=meta["broker"], store=store)
                 st.success(f"Committed {res['added']} • {res['duplicates']} duplicates skipped "
                            f"• {res['filtered_out']} filtered.")
