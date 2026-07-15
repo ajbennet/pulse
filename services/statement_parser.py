@@ -38,12 +38,22 @@ _ACTION_RULES = [
 ]
 
 
+# Short broker type-codes (e.g. TradeStation "Other Activity" report).
+_EXACT_ACTION_CODES = {
+    "SR": "TRANSFER_IN", "SD": "TRANSFER_OUT",   # security received / delivered
+    "TI": "TRANSFER_IN", "TO": "TRANSFER_OUT",
+}
+
+
 def normalize_action(text: str) -> str:
-    s = (text or "").strip().lower()
+    raw = (text or "").strip()
+    if raw.upper() in _EXACT_ACTION_CODES:
+        return _EXACT_ACTION_CODES[raw.upper()]
+    s = raw.lower()
     for action, keys in _ACTION_RULES:
         if any(k in s for k in keys):
             return action
-    return (text or "").strip().upper()
+    return raw.upper()
 
 
 # ----------------------------------------------------------------------
@@ -345,10 +355,12 @@ BROKER_ADAPTERS: Dict[str, Callable] = {
 
 def last4_from_text(text: str) -> Optional[str]:
     """Best-effort: pull an account number's last 4 digits from statement text."""
-    m = re.search(r"(?:account|acct)[^0-9]{0,12}(?:[xX*\-]+)?(\d{4})\b", text or "")
+    t = text or ""
+    # "Account: 12012959" / "Account Number *****7662" / "Acct # 1234"
+    m = re.search(r"(?:account|acct)\s*(?:number|no|#)?\s*[:#]?\s*[xX*\-]*(\d{4,})", t, re.I)
     if m:
-        return m.group(1)
-    m = re.search(r"[xX*]{2,}[\-\s]?(\d{4})\b", text or "")
+        return m.group(1)[-4:]
+    m = re.search(r"[xX*]{2,}[\-\s]?(\d{4})\b", t)
     return m.group(1) if m else None
 
 

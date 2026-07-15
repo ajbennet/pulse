@@ -52,7 +52,8 @@ with edit_tab:
             "source": st.column_config.TextColumn("source", disabled=True),
             "include_9sig": st.column_config.CheckboxColumn("9Sig?"),
             "action": st.column_config.SelectboxColumn(
-                "action", options=["BUY", "SELL", "CONTRIBUTION", "WITHDRAWAL",
+                "action", options=["BUY", "SELL", "CONTRIBUTION", "WITHDRAWAL", "TRANSFER_IN",
+                                       "TRANSFER_OUT", "REINVEST",
                                    "DIVIDEND", "INTEREST"]),
         },
     )
@@ -149,7 +150,8 @@ with import_tab:
                 column_config={
                     "account": st.column_config.SelectboxColumn("account", options=acct_opts),
                     "action": st.column_config.SelectboxColumn(
-                        "action", options=["BUY", "SELL", "CONTRIBUTION", "WITHDRAWAL",
+                        "action", options=["BUY", "SELL", "CONTRIBUTION", "WITHDRAWAL", "TRANSFER_IN",
+                                       "TRANSFER_OUT", "REINVEST",
                                            "DIVIDEND", "INTEREST"]),
                 },
             )
