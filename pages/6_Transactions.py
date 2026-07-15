@@ -85,6 +85,18 @@ with import_tab:
     st.caption("**Flow:** upload → extract relevant transactions → review & edit → commit. "
                "Only TQQQ/AGG/BRK.B/UGL trades (plus contributions/income) are extracted; "
                "other stocks are dropped, and duplicates are skipped on commit.")
+
+    with st.expander("📥 Where to export statements from"):
+        st.markdown(
+            "- **Robinhood** — [Account → History](https://robinhood.com/account/history), "
+            "then print the page to PDF (⌘P → *Save as PDF*).\n"
+            "- **Fidelity** — [Activity & Orders]"
+            "(https://digital.fidelity.com/ftgw/digital/portfolio/activity) → **Download** → CSV.\n"
+            "- **TradeStation** — [Portfolio → Activity]"
+            "(https://my.tradestation.com/portfolio/activity?account=12012959) → export "
+            "**Trade Activity** as CSV. ⚠️ The *Cash Activity* report has no buy/sell trades."
+        )
+
     up = st.file_uploader("Statement file (CSV or PDF)", type=["csv", "pdf"])
 
     if up is not None:
