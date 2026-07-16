@@ -165,6 +165,74 @@ def sim_9sig(closes: pd.DataFrame, reserve_weights: Dict[str, float], tqqq: str 
 # ----------------------------------------------------------------------
 # Bake-off driver
 # ----------------------------------------------------------------------
+def drawdown_episodes(closes: pd.DataFrame, base: str = "TQQQ",
+                      defensive=("UGL", "BRK-B", "AGG"), min_depth: float = 0.30) -> pd.DataFrame:
+    """
+    Identify peak→trough drawdown episodes in `base` deeper than `min_depth`, and
+    report how each defensive asset performed over the SAME decline leg (peak→
+    trough). Positive = it held up / hedged while base fell.
+
+    Columns: Peak, Trough, Recovery, Days down, Recovery days, <base> DD,
+    <defensive returns...>, Best hedge.
+    """
+    if base not in closes.columns:
+        return pd.DataFrame()
+    px = closes[base].dropna()
+    defensive = [d for d in defensive if d in closes.columns]
+
+    peak_p = tr_p = px.iloc[0]
+    peak_d = tr_d = px.index[0]
+    eps = []
+
+    def _leg(pd_, td_, rec, rec_days):
+        row = {"Peak": pd_.date().isoformat(), "Trough": td_.date().isoformat(),
+               "Recovery": rec, "Days down": (td_ - pd_).days, "Recovery days": rec_days,
+               f"{base} DD": px.loc[td_] / px.loc[pd_] - 1.0}
+        for a in defensive:
+            try:
+                row[a] = closes.loc[td_, a] / closes.loc[pd_, a] - 1.0
+            except KeyError:
+                row[a] = None
+        return row
+
+    for d, p in px.items():
+        if p > peak_p:
+            if tr_p / peak_p - 1.0 <= -min_depth:
+                eps.append(_leg(peak_d, tr_d, d.date().isoformat(), (d - tr_d).days))
+            peak_p = tr_p = p
+            peak_d = tr_d = d
+        elif p < tr_p:
+            tr_p, tr_d = p, d
+    if tr_p / peak_p - 1.0 <= -min_depth:                 # ongoing (unrecovered)
+        eps.append(_leg(peak_d, tr_d, "ongoing", None))
+
+    df = pd.DataFrame(eps)
+    if df.empty:
+        return df
+
+    def _best(row):
+        vals = {a: row[a] for a in defensive if pd.notna(row.get(a))}
+        return max(vals, key=vals.get) if vals else "—"
+
+    df["Best hedge"] = df.apply(_best, axis=1)
+    cols = (["Peak", "Trough", "Recovery", "Days down", "Recovery days", f"{base} DD"]
+            + defensive + ["Best hedge"])
+    return df[[c for c in cols if c in df.columns]]
+
+
+def drawdown_defensive_summary(episodes: pd.DataFrame,
+                               defensive=("UGL", "BRK-B", "AGG")) -> Dict:
+    """Average defensive return across episodes + how often each was the best hedge."""
+    defensive = [d for d in defensive if d in episodes.columns]
+    if episodes.empty:
+        return {}
+    avg = {d: float(episodes[d].mean()) for d in defensive}
+    wins = episodes["Best hedge"].value_counts().to_dict() if "Best hedge" in episodes else {}
+    best_overall = max(avg, key=avg.get) if avg else None
+    return {"avg_return": avg, "best_counts": wins, "best_overall": best_overall,
+            "n": int(len(episodes))}
+
+
 @dataclass
 class Strat:
     name: str

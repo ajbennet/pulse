@@ -9,7 +9,7 @@ import streamlit as st
 
 from services import backtest_service as bt
 from services import compare as C
-from ui import helpers
+from ui import drawdowns, helpers
 
 st.title("🧪 Strategy Lab")
 st.caption("Compare leveraged-TQQQ strategies and tune the trend/lever knobs. "
@@ -95,6 +95,9 @@ with tab_cmp:
         st.area_chart(eqdf / eqdf.cummax() - 1.0, height=260)
         st.download_button("⬇ Comparison metrics CSV", mdf.to_csv(),
                            "strategy_comparison.csv", "text/csv")
+
+        st.subheader("Defensive assets during TQQQ drawdowns")
+        drawdowns.render("lab_cmp", closes=cl)
 
 # ======================================================================
 # Tune levers

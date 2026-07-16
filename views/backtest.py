@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from core import config
-from ui import helpers
+from ui import drawdowns, helpers
 
 STRATEGY_NAME = "Sentinel"
 
@@ -141,16 +141,16 @@ if not view.empty:
     s[2].metric("Best day", helpers.fmt_pct(view["daily_return"].max()))
     s[3].metric("Worst day", helpers.fmt_pct(view["daily_return"].min()))
 
-# Format + highlight (cap styled rows for responsiveness).
-CAP = 2000
-disp = view.head(CAP)
-if len(view) > CAP:
-    st.info(f"Showing the first {CAP:,} of {len(view):,} filtered rows (styled). "
-            "Narrow the filters, or use the download for the full set.")
+# Downloads first (full + filtered), then the collapsible-by-quarter table.
+d1, d2 = st.columns(2)
+d1.download_button(f"⬇ Filtered rows ({len(view):,}) CSV", view.to_csv(index=False),
+                   f"{STRATEGY_NAME.lower()}_daily_filtered.csv", "text/csv")
+d2.download_button(f"⬇ Full daily table ({len(daily):,}) CSV", daily.to_csv(index=False),
+                   f"{STRATEGY_NAME.lower()}_daily.csv", "text/csv")
 
-pct_cols = [c for c in disp.columns if c.endswith("return") or c.endswith("weight")
+pct_cols = [c for c in view.columns if c.endswith("return") or c.endswith("weight")
             or c == "drawdown"]
-money_cols = [c for c in disp.columns if c.endswith("_value") or c == "portfolio_value"
+money_cols = [c for c in view.columns if c.endswith("_value") or c == "portfolio_value"
               or c == "cash"]
 fmt = {**{c: "{:.2%}" for c in pct_cols}, **{c: "${:,.0f}" for c in money_cols}}
 
@@ -163,15 +163,32 @@ def _hl(row):
     return [""] * len(row)
 
 
-styler = disp.style.format(fmt, na_rep="—").apply(_hl, axis=1)
-st.dataframe(styler, use_container_width=True, height=460, hide_index=True)
-st.caption("Green = significant up day, red = significant down day (threshold above).")
+daily["quarter"] = daily["date"].dt.to_period("Q").astype(str)
+view = view.assign(quarter=view["date"].dt.to_period("Q").astype(str))
+qagg = daily.groupby("quarter")["portfolio_value"].agg(["first", "last"])
+qagg["ret"] = qagg["last"] / qagg["first"] - 1.0
 
-d1, d2 = st.columns(2)
-d1.download_button(f"⬇ Filtered rows ({len(view):,}) CSV", view.to_csv(index=False),
-                   f"{STRATEGY_NAME.lower()}_daily_filtered.csv", "text/csv")
-d2.download_button(f"⬇ Full daily table ({len(daily):,}) CSV", daily.to_csv(index=False),
-                   f"{STRATEGY_NAME.lower()}_daily.csv", "text/csv")
+st.caption("Rows grouped by quarter — collapsed by default; expand a quarter to inspect its "
+           "days. Green/red = significant up/down day. Use the date range to limit quarters.")
+quarters = sorted(view["quarter"].unique(), reverse=True)
+if len(quarters) > 120:
+    st.info(f"{len(quarters)} quarters after filtering — narrow the date range for speed.")
+for q in quarters:
+    sub = view[view["quarter"] == q].drop(columns=["quarter"])
+    nsig = int((sub["daily_return"].abs() >= min_move).sum())
+    r = qagg.loc[q, "ret"] if q in qagg.index else float("nan")
+    with st.expander(f"{q} · {len(sub)} days · quarter {r:+.1%} · {nsig} big day(s)",
+                     expanded=False):
+        st.dataframe(sub.style.format(fmt, na_rep="—").apply(_hl, axis=1),
+                     use_container_width=True, hide_index=True)
+
+# ----------------------------------------------------------------------
+# Defensive assets during TQQQ drawdowns
+# ----------------------------------------------------------------------
+st.subheader("Defensive assets during TQQQ drawdowns")
+_bt_start = str(pd.to_datetime(result.equity["date"]).min().date())
+_bt_end = str(pd.to_datetime(result.equity["date"]).max().date())
+drawdowns.render("bt", start=_bt_start, end=_bt_end)
 
 # ----------------------------------------------------------------------
 # Logs
