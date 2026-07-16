@@ -13,6 +13,8 @@ core rule set (no 30-Down / spike-reset / contributions) — enough for an
 apples-to-apples drawdown/return comparison.
 """
 
+import os
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -21,34 +23,70 @@ import pandas as pd
 import yfinance as yf
 
 TRADING_DAYS = 252
+_PRICE_CACHE = os.path.join("data", "price_cache")
+_CACHE_TTL = 6 * 3600           # refresh cached history at most every 6h
+_HISTORY_START = "2005-01-01"   # cache full history per ticker, slice per request
 
 
-# ----------------------------------------------------------------------
-# Data
-# ----------------------------------------------------------------------
+def _download_one(ticker: str) -> pd.Series:
+    """Download one ticker's full adjusted-close history, with retries."""
+    for _ in range(3):
+        try:
+            df = yf.download(ticker, start=_HISTORY_START, auto_adjust=True,
+                             progress=False, threads=False)
+        except Exception:
+            df = None
+        if df is not None and not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            close = df["Close"] if "Close" in df.columns else df.iloc[:, 0]
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            s = close.dropna()
+            if not s.empty:
+                s.index = pd.to_datetime(s.index)
+                return s
+    return pd.Series(dtype=float)
+
+
+def _cached_series(ticker: str) -> pd.Series:
+    """Full-history adjusted closes for one ticker, backed by an on-disk cache
+    (so one flaky yfinance call can't truncate a whole comparison)."""
+    os.makedirs(_PRICE_CACHE, exist_ok=True)
+    path = os.path.join(_PRICE_CACHE, ticker.replace("/", "_").replace(".", "_") + ".csv")
+    cached = None
+    if os.path.exists(path):
+        try:
+            cached = pd.read_csv(path, index_col=0, parse_dates=True)["close"]
+        except Exception:
+            cached = None
+    fresh = (cached is not None and not cached.empty
+             and time.time() - os.path.getmtime(path) < _CACHE_TTL)
+    if fresh:
+        return cached
+
+    dl = _download_one(ticker)
+    if not dl.empty:
+        dl.to_frame("close").to_csv(path)
+        return dl
+    if cached is not None and not cached.empty:
+        return cached           # fall back to stale cache on download failure
+    raise RuntimeError(f"No data for {ticker} (yfinance).")
+
+
 def load_closes(tickers: List[str], start: str, end: Optional[str] = None) -> pd.DataFrame:
     """Adjusted daily closes for the tickers, aligned on their common dates.
-    Retries once on a transient/empty download; raises if a ticker never returns."""
-    last = pd.DataFrame()
-    for _ in range(2):
-        raw = yf.download(tickers, start=start, end=end, auto_adjust=True,
-                          progress=False, threads=False)
-        if raw is None or raw.empty:
-            continue
-        data = raw["Close"] if "Close" in raw.columns.get_level_values(0) else raw
-        if isinstance(data, pd.Series):
-            data = data.to_frame(tickers[0])
-        data = data.dropna(axis=1, how="all").dropna(how="any")
-        missing = [t for t in tickers if t not in data.columns]
-        if not data.empty and not missing:
-            return data
-        last = data
-    if last.empty:
-        raise RuntimeError(f"Could not download prices for {tickers} (yfinance). Try Reload.")
-    missing = [t for t in tickers if t not in last.columns]
-    if missing:
-        raise RuntimeError(f"No data returned for {missing} (yfinance). Try Reload.")
-    return last
+    Each ticker is fetched over full history (cached), then sliced — so a partial
+    download of one ticker can't truncate the others."""
+    series = {t: _cached_series(t) for t in tickers}
+    df = pd.DataFrame(series)
+    df = df[df.index >= pd.to_datetime(start)]
+    if end is not None:
+        df = df[df.index <= pd.to_datetime(end)]
+    df = df.dropna(how="any")
+    if df.empty:
+        raise RuntimeError(f"No overlapping data for {tickers} from {start}.")
+    return df
 
 
 # ----------------------------------------------------------------------
