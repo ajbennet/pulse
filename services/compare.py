@@ -84,20 +84,11 @@ def _basket_return(closes, weights, rets):
     return out
 
 
-def sim_rotation(closes: pd.DataFrame, on_weights: Dict[str, float],
-                 off_weights: Dict[str, float], sma_len: int = 150,
-                 signal_ticker: str = "TQQQ", band: float = 0.0,
-                 initial: float = 100_000) -> pd.Series:
-    """
-    Trend rotation: hold `on_weights` when signal_ticker is above its SMA (with
-    an optional re-entry buffer `band`), else `off_weights`. Weights rebalanced
-    daily within a regime. Signal is lagged one day (no look-ahead).
-    """
-    rets = closes.pct_change().fillna(0.0)
+def _regime_on(closes: pd.DataFrame, signal_ticker: str, sma_len: int,
+               band: float) -> pd.Series:
+    """Boolean 'above trend' regime with hysteresis, lagged one day (no look-ahead)."""
     price = closes[signal_ticker]
     sma = price.rolling(sma_len).mean()
-
-    # Regime with hysteresis: exit below SMA, re-enter above SMA*(1+band).
     state = False
     states = []
     for p, s in zip(price.values, sma.values):
@@ -109,13 +100,53 @@ def sim_rotation(closes: pd.DataFrame, on_weights: Dict[str, float],
         elif state and p < s:
             state = False
         states.append(state)
-    on = pd.Series(states, index=closes.index).shift(1).fillna(False)
+    return pd.Series(states, index=closes.index).shift(1).fillna(False)
 
-    on_ret = _basket_return(closes, on_weights, rets)
-    off_ret = _basket_return(closes, off_weights, rets)
-    port = on_ret.where(on, off_ret)
+
+def sim_rotation(closes: pd.DataFrame, on_weights: Dict[str, float],
+                 off_weights: Dict[str, float], sma_len: int = 150,
+                 signal_ticker: str = "TQQQ", band: float = 0.0,
+                 initial: float = 100_000) -> pd.Series:
+    """
+    Trend rotation: hold `on_weights` when signal_ticker is above its SMA (with
+    an optional re-entry buffer `band`), else `off_weights`. Weights rebalanced
+    daily within a regime. Signal is lagged one day (no look-ahead).
+    """
+    rets = closes.pct_change().fillna(0.0)
+    on = _regime_on(closes, signal_ticker, sma_len, band)
+    port = _basket_return(closes, on_weights, rets).where(
+        on, _basket_return(closes, off_weights, rets))
     equity = initial * (1 + port).cumprod()
     return equity.iloc[sma_len:]  # drop the pre-SMA warmup
+
+
+def rotation_detail(closes: pd.DataFrame, on_weights: Dict[str, float],
+                    off_weights: Dict[str, float], sma_len: int = 150,
+                    signal_ticker: str = "TQQQ", band: float = 0.0,
+                    initial: float = 100_000) -> pd.DataFrame:
+    """Per-day detail table for a trend rotation: regime, value, returns, drawdown,
+    and the applied target weight per asset."""
+    rets = closes.pct_change().fillna(0.0)
+    on = _regime_on(closes, signal_ticker, sma_len, band)
+    port = _basket_return(closes, on_weights, rets).where(
+        on, _basket_return(closes, off_weights, rets))
+    equity = initial * (1 + port).cumprod()
+
+    df = pd.DataFrame(index=closes.index)
+    df["regime"] = np.where(on, "trend (TQQQ)", "defensive")
+    df["portfolio_value"] = equity
+    df["daily_return"] = port
+    df["cum_return"] = equity / equity.iloc[0] - 1.0
+    df["drawdown"] = equity / equity.cummax() - 1.0
+    for a in sorted(set(on_weights) | set(off_weights)):
+        if a == "CASH":
+            continue
+        df[f"{a}_weight"] = np.where(on, on_weights.get(a, 0.0), off_weights.get(a, 0.0))
+    df = df.iloc[sma_len:].reset_index().rename(columns={"index": "date"})
+    if "Date" in df.columns:
+        df = df.rename(columns={"Date": "date"})
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
 
 def sim_9sig(closes: pd.DataFrame, reserve_weights: Dict[str, float], tqqq: str = "TQQQ",

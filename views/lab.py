@@ -7,9 +7,8 @@ services.compare; 9-Sig here is the core rule set (no 30-Down/spike/contribs).
 import pandas as pd
 import streamlit as st
 
-from services import backtest_service as bt
 from services import compare as C
-from ui import drawdowns, helpers
+from ui import drawdowns
 
 st.title("🧪 Strategy Lab")
 st.caption("Compare leveraged-TQQQ strategies and tune the trend/lever knobs. "
@@ -19,13 +18,6 @@ st.caption("Compare leveraged-TQQQ strategies and tune the trend/lever knobs. "
 @st.cache_data(show_spinner="Loading prices…")
 def _closes(tickers, start):
     return C.load_closes(list(tickers), start)
-
-
-@st.cache_data(show_spinner="Running Sentinel (LDR)…")
-def _sentinel_equity():
-    r = bt.run(bt.RunConfig(run_benchmark=False))
-    d = r.daily[["date", "portfolio_value"]]
-    return pd.Series(d["portfolio_value"].values, index=pd.to_datetime(d["date"]))
 
 
 def _assemble(equities: dict, initial: float):
@@ -58,7 +50,6 @@ with tab_cmp:
     window = c1.radio("Window", ["Recent (2021+, incl KMLM/DBMF)", "Long (2010+, honest cycle)"],
                       index=0)
     initial = c2.number_input("Initial investment ($)", 1000, 10_000_000, 10_000, step=1000)
-    include_sentinel = st.checkbox("Include Sentinel (LDR)", value=True)
 
     recent = window.startswith("Recent")
     equities = {}
@@ -78,8 +69,6 @@ with tab_cmp:
     equities["B&H TQQQ"] = C.sim_buyhold(cl, "TQQQ")
     equities["9-Sig (15/15 UGL/BRK.B)"] = C.sim_9sig(cl, {"UGL": 0.5, "BRK-B": 0.5})
     equities["9-Sig (30% AGG)"] = C.sim_9sig(cl, {"AGG": 1.0})
-    if include_sentinel:
-        equities["Sentinel (LDR)"] = _sentinel_equity()
 
     mdf, eqdf = _assemble(equities, initial)
     if mdf.empty:

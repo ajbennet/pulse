@@ -149,15 +149,22 @@ The main app is the **9-Sig TQQQ Tracker**, a single hub with tabs:
 | **Holdings** | Per-account holdings (zero-value rows hidden by default). |
 | **Metrics** | All imported Dashboard metrics, grouped by section. |
 
-A separate **Sentinel Backtest** page runs the original LDR strategy
-(Leveraged Drawdown Reduction) research backtest, with summary metrics, equity /
-drawdown charts, and a **filterable daily table** (per-day value, cash, per-asset
-weights, daily %, cumulative return, drawdown, regime) — filter by move size /
-regime / direction / date range, significant up/down days highlighted, and
-downloadable to CSV.
+Two research pages sit alongside the tracker:
 
-Navigation uses `st.navigation`, so the sidebar shows **9-Sig Tracker** (main)
-and **Sentinel Backtest** rather than filename-based labels.
+- **Strategy Lab** — compare leveraged-TQQQ strategies side by side (Buy & Hold,
+  9-Sig variants, SMA trend rotation, SMA+levers) over a recent (2021+) or long
+  (2010+) window, rebased to any initial investment; plus a "Tune levers" sandbox
+  and a "defensives during TQQQ drawdowns" table.
+- **Trend Backtest** — the bake-off leader: **SMA trend rotation** (hold TQQQ
+  above its SMA, rotate to a managed-futures + gold basket below it), with
+  adjustable levers (SMA length, re-entry band, TQQQ weight, defensive mix),
+  Buy & Hold comparison, equity/drawdown charts, a **quarter-collapsible daily
+  table**, and the drawdown-defensives analysis.
+
+Navigation uses `st.navigation`, so the sidebar shows **9-Sig Tracker** (main),
+**Strategy Lab**, and **Trend Backtest**. (The earlier LDR "Sentinel" strategy
+was retired from the app after the bake-off showed a plain trend filter beats it;
+the LDR engine remains available via `python run_backtest.py`.)
 
 ## Architecture & extending
 
