@@ -70,6 +70,10 @@ def render_overview(store):
         for level, msg in alerts:
             {"CRITICAL": st.error, "WARNING": st.warning}.get(level, st.info)(msg)
 
+    # Full imported dashboard metrics, below the overview.
+    st.divider()
+    render_metrics(store)
+
 
 def _signal_banner(sig):
     banner = {"BUY": st.success, "SELL": st.warning}.get(sig["raw_signal"], st.info)
@@ -206,13 +210,42 @@ def render_holdings(store):
 # ----------------------------------------------------------------------
 # Sheet metrics (formatted)
 # ----------------------------------------------------------------------
-def render_metrics(store):
+_PCT_KEYS = ("return", "allocation", "throttle", "drawdown", "gain", "dietz", "yield")
+_MONEY_KEYS = ("value", "price", "line", "base", "amount", "cash", "flow", "difference",
+               "reserve", "portfolio", "contribution", "withdrawal", "income",
+               "buying power", "max buy")
+
+
+def _fmt_metric(metric, value_text, value_num):
+    """Format as $/% using the numeric value; infer type from the metric name
+    (so it works even when the source text has no $/% symbol). Text/dates pass through."""
+    vt = value_text or ""
+    if value_num is None or value_num != value_num:   # None/NaN -> keep text
+        return vt
+    money = lambda v: (f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}")
+    if "%" in vt:
+        return f"{value_num * 100:.2f}%"
+    if "$" in vt:
+        return money(value_num)
+    name = (metric or "").lower()
+    if any(k in name for k in _PCT_KEYS):
+        return f"{value_num * 100:.2f}%"
+    if any(k in name for k in _MONEY_KEYS):
+        return money(value_num)
+    return f"{value_num:,.2f}"
+
+
+def render_metrics(store, heading="Dashboard metrics"):
     mdf = nine_sig.dashboard_metrics(store)
     if mdf.empty:
         st.info("No dashboard metrics imported.")
         return
+    st.subheader(heading)
     st.caption(f"All {len(mdf)} metrics from the imported Dashboard "
                f"(captured {mdf.attrs.get('captured_at') or '—'}).")
+    mdf = mdf.copy()
+    mdf["Value"] = [_fmt_metric(mt, vt, vn)
+                    for mt, vt, vn in zip(mdf["Metric"], mdf["Value"], mdf["Number"])]
     for section in mdf["Section"].unique():
         sec = mdf[mdf["Section"] == section]
         st.markdown(f"**{section or 'Other'}**")

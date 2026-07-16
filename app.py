@@ -25,8 +25,8 @@ if imp is None:
 st.caption(f"Source: **{imp['source_name']}** · imported {imp['imported_at']} · "
            "research/portfolio-assistance only, not investment advice.")
 
-tab_overview, tab_signal, tab_quarterly, tab_txns, tab_holdings, tab_metrics = st.tabs(
-    ["Overview", "Signal", "Quarterly", "Transactions", "Holdings", "Metrics"])
+tab_overview, tab_signal, tab_quarterly, tab_txns, tab_holdings = st.tabs(
+    ["Overview", "Signal", "Quarterly", "Transactions", "Holdings"])
 
 with tab_overview:
     ninesig.render_overview(store)
@@ -38,5 +38,3 @@ with tab_txns:
     ninesig.render_transactions(store)
 with tab_holdings:
     ninesig.render_holdings(store)
-with tab_metrics:
-    ninesig.render_metrics(store)

@@ -169,9 +169,13 @@ def dashboard_metrics(store: Optional[SqliteStore] = None) -> pd.DataFrame:
     """
     store = store or SqliteStore()
     with store._conn() as c:
+        # Prefer the freshest *captured* snapshot (live CSV over an older xlsx),
+        # falling back to import order.
         imp = c.execute(
             "SELECT id, imported_at, captured_at FROM sheet_imports "
-            "WHERE lower(tab) = 'dashboard' ORDER BY id DESC LIMIT 1"
+            "WHERE lower(tab) = 'dashboard' "
+            "ORDER BY (captured_at IS NULL OR captured_at = ''), captured_at DESC, id DESC "
+            "LIMIT 1"
         ).fetchone()
         if not imp:
             return pd.DataFrame(columns=["Section", "Metric", "Value", "Number"])
