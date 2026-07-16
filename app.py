@@ -1,61 +1,42 @@
 """
-PULSE — Protected Ultra Leverage Strategy Engine
-Streamlit home page.
+PULSE — 9-Sig TQQQ Tracker (main app).
 
-Run with:
+Consolidated hub: one page with tabs for the signal, quarterly activity,
+transactions/import, holdings, and sheet metrics. Run with:
+
     streamlit run app.py
-
-The multi-page app lives in pages/:
-    1_Backtest   — run and analyse LDR backtests
-    2_Portfolio  — manual / paper portfolio tracking
-    3_Signals    — live LDR rebalance recommendations
-    4_Alerts     — stop / re-entry / drift alerts
 """
 
 import streamlit as st
 
-from core import config
+from storage.sqlite_store import SqliteStore
+from ui import ninesig
 
-st.set_page_config(page_title="PULSE", page_icon="📈", layout="wide")
+st.set_page_config(page_title="9-Sig Tracker", page_icon="🎯", layout="wide")
+st.title("🎯 9-Sig TQQQ Tracker")
 
-st.title("📈 PULSE")
-st.caption("Protected Ultra Leverage Strategy Engine — LDR (Leveraged Drawdown Reduction)")
+store = SqliteStore()
+imp = store.latest_import("Holdings_By_Account")
+if imp is None:
+    st.warning("No 9-Sig data imported yet. Import the workbook with "
+               "`services.sheet_import.import_xlsx(...)`.")
+    st.stop()
 
-st.markdown(
-    """
-PULSE backtests and helps you manage a leveraged-ETF **drawdown-control**
-strategy that rotates out of **TQQQ** during deep drawdowns into defensive
-assets (**UGL**, **BRK-B**).
+st.caption(f"Source: **{imp['source_name']}** · imported {imp['imported_at']} · "
+           "research/portfolio-assistance only, not investment advice.")
 
-Use the pages in the sidebar:
+tab_overview, tab_signal, tab_quarterly, tab_txns, tab_holdings, tab_metrics = st.tabs(
+    ["Overview", "Signal", "Quarterly", "Transactions", "Holdings", "Metrics"])
 
-| Page | What it does |
-|------|--------------|
-| **Backtest** | Configure thresholds/weights and run a full historical backtest with charts and downloadable CSVs. |
-| **Portfolio** | Track a manual / paper portfolio: holdings, cash, transactions, weights, and P&L. |
-| **Signals** | Apply the live LDR rules to your holdings and get recommended buy/sell trades. |
-| **Alerts** | See stop / re-entry / drift alerts for your portfolio. |
-| **9-Sig Tracker** | Your imported 9-Sig strategy: multi-account holdings, the quarterly signal, per-account trade allocation, sheet metrics, and quarterly log. |
-| **Transactions** | Editable transaction ledger; import broker statements (CSV/PDF) → extract strategy-ticker trades → review → commit (deduplicated). |
-
-> ⚠️ Research and portfolio-assistance tool only — **not investment advice.**
-Leveraged ETFs carry significant risk. See the README for the full caveats,
-including the known whipsaw behaviour of the re-entry rule.
-    """
-)
-
-with st.expander("Current default configuration"):
-    st.write(
-        {
-            "Universe": config.TICKERS,
-            "Normal weights": config.NORMAL_WEIGHTS,
-            "Defensive weights": config.DEFENSIVE_WEIGHTS,
-            "Stop drawdown": config.STOP_DRAWDOWN_THRESHOLD,
-            "Rebalance drift": config.REBALANCE_DRIFT_THRESHOLD,
-            "Initial capital": config.INITIAL_CAPITAL,
-        }
-    )
-
-st.info("Tip: the Backtest page shares the exact same engine and rules "
-        "(`core.rules`) as the live Signals page, so backtested and live "
-        "behaviour stay consistent.")
+with tab_overview:
+    ninesig.render_overview(store)
+with tab_signal:
+    ninesig.render_signal(store)
+with tab_quarterly:
+    ninesig.render_quarterly(store)
+with tab_txns:
+    ninesig.render_transactions(store)
+with tab_holdings:
+    ninesig.render_holdings(store)
+with tab_metrics:
+    ninesig.render_metrics(store)

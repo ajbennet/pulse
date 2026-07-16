@@ -132,22 +132,24 @@ python run_backtest.py
 
 Prints a console summary and writes CSVs to `results/`.
 
-**Web UI (backtest + portfolio management):**
+**Web UI (9-Sig tracker):**
 
 ```bash
 streamlit run app.py
 ```
 
-Opens a local browser app with four pages:
+The main app is the **9-Sig TQQQ Tracker**, a single hub with tabs:
 
-| Page | What it does |
-|------|--------------|
-| **Backtest** | Adjust capital, thresholds, and weights in the sidebar, run a backtest, view equity/drawdown charts, and download all CSVs. |
-| **Portfolio** | Create paper portfolios; set holdings/cash or record BUY/SELL transactions; see current weights vs. target, drift, and realized/unrealized P&L. |
-| **Signals** | Evaluate the live LDR rules against your holdings and the latest close; get recommended buy/sell trades; optionally apply them as paper trades. |
-| **Alerts** | Surface stop / re-entry / drift alerts; dispatch them via the notifier (default logs to `logs/alerts.log`). |
-| **9-Sig Tracker** | Reads the imported 9-Sig workbook from SQLite and recomputes the quarterly signal (9% line, hold band, 30-Down, spike-reset, throttles) with a per-account trade allocation. Toggle live prices. Tabs for sheet metrics, holdings (hides zero-value rows), and the quarterly log. |
-| **Transactions** | Editable ledger (seeded from the sheet) plus statement import: upload a Robinhood/Fidelity/TradeStation statement (CSV or PDF) → extract only strategy-ticker trades (TQQQ/AGG/BRK.B/UGL) + contributions/income → review & edit → commit, with deduplication. Accounts mapped by name + last-4. |
+| Tab | What it does |
+|-----|--------------|
+| **Overview** | Formatted high-level snapshot ($/% tiles), the quarterly signal (9% line, modified line, BUY/SELL/HOLD, trade amount), and inline alerts (reserve/30-Down/spike). Toggle live prices. |
+| **Signal** | Signal detail, 30-Down/spike overlays, 90% buying power, per-account trade allocation, and quarter-close (roll the signal base forward). |
+| **Quarterly** | Per-quarter activity and snapshot metrics **derived from the transaction ledger** (positions valued at quarter-end prices, contributions, QTD start date/value, QoQ change). |
+| **Transactions** | Editable ledger + statement import: upload a Robinhood/Fidelity/TradeStation statement (CSV or PDF) → extract only strategy-ticker trades (TQQQ/AGG/BRK.B/UGL) → review & edit → commit (deduplicated). Accounts by name + last-4. |
+| **Holdings** | Per-account holdings (zero-value rows hidden by default). |
+| **Metrics** | All imported Dashboard metrics, grouped by section. |
+
+A separate **Backtest** page remains for the original LDR strategy research.
 
 ## Architecture & extending
 
