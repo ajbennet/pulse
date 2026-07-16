@@ -69,12 +69,23 @@ c[1].metric("Regime switches", m["regime_switches"])
 c[2].metric("Total trades", m["total_trades"])
 c[3].metric("Time defensive", helpers.fmt_pct(m.get("pct_time_defensive")))
 
-if b is not None:
-    with st.expander("Benchmark comparison (70/15/15, no stop)"):
-        st.dataframe(pd.DataFrame({
-            STRATEGY_NAME: [m["cagr"], m["max_drawdown"], m["sharpe_ratio"], m["final_value"]],
-            "Benchmark": [b["cagr"], b["max_drawdown"], b["sharpe_ratio"], b["final_value"]],
-        }, index=["CAGR", "Max drawdown", "Sharpe", "Final value"]), use_container_width=True)
+bh = result.bh_metrics
+with st.expander("Comparison vs benchmark & buy-and-hold", expanded=True):
+    cols = {STRATEGY_NAME: [m["cagr"], m["max_drawdown"], m["sharpe_ratio"], m["final_value"]]}
+    if b is not None:
+        cols["Benchmark 70/15/15"] = [b["cagr"], b["max_drawdown"], b["sharpe_ratio"],
+                                      b["final_value"]]
+    if bh is not None:
+        cols["B&H TQQQ"] = [bh["cagr"], bh["max_drawdown"], bh["sharpe_ratio"],
+                            bh["final_value"]]
+    comp = pd.DataFrame(cols, index=["CAGR", "Max drawdown", "Sharpe", "Final value"])
+    st.dataframe(comp.style.format({c: (lambda v: f"{v:.2%}") for c in comp.columns},
+                                   subset=(["CAGR", "Max drawdown"], slice(None)))
+                 .format({c: (lambda v: f"{v:.2f}") for c in comp.columns},
+                         subset=(["Sharpe"], slice(None)))
+                 .format({c: (lambda v: f"${v:,.0f}") for c in comp.columns},
+                         subset=(["Final value"], slice(None))),
+                 use_container_width=True)
 
 # ----------------------------------------------------------------------
 # Charts
@@ -86,8 +97,12 @@ chart = eq.set_index("date")[["portfolio_value"]].rename(columns={"portfolio_val
 if result.benchmark_equity is not None:
     be = result.benchmark_equity.copy()
     be["date"] = pd.to_datetime(be["date"])
-    chart["Benchmark"] = be.set_index("date")["portfolio_value"]
-st.line_chart(chart)
+    chart["Benchmark 70/15/15"] = be.set_index("date")["portfolio_value"]
+if result.bh_equity is not None:
+    bhe = result.bh_equity.copy()
+    bhe["date"] = pd.to_datetime(bhe["date"])
+    chart["B&H TQQQ"] = bhe.set_index("date")["portfolio_value"]
+st.line_chart(chart, height=360)
 st.subheader("Drawdown")
 st.area_chart(chart / chart.cummax() - 1.0)
 
@@ -163,7 +178,7 @@ d2.download_button(f"⬇ Full daily table ({len(daily):,}) CSV", daily.to_csv(in
 # ----------------------------------------------------------------------
 t_regime, t_trades, t_annual = st.tabs(["Regime log", "Trade log", "Annual returns"])
 with t_regime:
-    st.dataframe(result.regimes, use_container_width=True, height=300)
+    st.dataframe(result.regimes.replace("", pd.NA), use_container_width=True, height=300)
     st.download_button("Download regime_log.csv", result.regimes.to_csv(index=False),
                        "regime_log.csv", "text/csv")
 with t_trades:

@@ -12,6 +12,7 @@ import streamlit as st
 st.set_page_config(page_title="9-Sig Tracker", page_icon="🎯", layout="wide")
 
 tracker = st.Page("views/tracker.py", title="9-Sig Tracker", icon="🎯", default=True)
+lab = st.Page("views/lab.py", title="Strategy Lab", icon="🧪")
 backtest = st.Page("views/backtest.py", title="Sentinel Backtest", icon="🛡️")
 
-st.navigation([tracker, backtest]).run()
+st.navigation([tracker, lab, backtest]).run()

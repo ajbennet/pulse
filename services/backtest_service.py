@@ -43,6 +43,8 @@ class BacktestResult:
     daily: Optional[pd.DataFrame] = None       # rich per-day table
     benchmark_metrics: Optional[Dict] = None
     benchmark_equity: Optional[pd.DataFrame] = None
+    bh_metrics: Optional[Dict] = None          # buy & hold TQQQ
+    bh_equity: Optional[pd.DataFrame] = None
 
 
 TRADE_COLS = ["date", "ticker", "action", "size", "executed_price", "value", "regime", "note"]
@@ -148,9 +150,19 @@ def run(rc: Optional[RunConfig] = None, data=None, write_csv: bool = False,
         )
         bench_equity = _equity_df(bench.equity_curve)
 
+    # Buy & Hold TQQQ baseline over the same window.
+    tqqq_close = data[config.TICKERS[0]]["close"].reindex(common_dates)
+    bh_curve = list(zip([d.date() for d in common_dates],
+                        (rc.initial_capital * tqqq_close / tqqq_close.iloc[0]).values))
+    bh_metrics = analyzers.compute_metrics(
+        bh_curve, regime_records=None, trades_count=0, regime_switches=0,
+        initial_capital=rc.initial_capital, label="B&H TQQQ")
+    bh_equity = _equity_df(bh_curve)
+
     result = BacktestResult(
         metrics=metrics, equity=equity, trades=trades, regimes=regimes, annual=annual,
         daily=daily, benchmark_metrics=bench_metrics, benchmark_equity=bench_equity,
+        bh_metrics=bh_metrics, bh_equity=bh_equity,
     )
     if write_csv:
         write_outputs(result)
