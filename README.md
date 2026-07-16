@@ -149,7 +149,15 @@ The main app is the **9-Sig TQQQ Tracker**, a single hub with tabs:
 | **Holdings** | Per-account holdings (zero-value rows hidden by default). |
 | **Metrics** | All imported Dashboard metrics, grouped by section. |
 
-A separate **Backtest** page remains for the original LDR strategy research.
+A separate **Sentinel Backtest** page runs the original LDR strategy
+(Leveraged Drawdown Reduction) research backtest, with summary metrics, equity /
+drawdown charts, and a **filterable daily table** (per-day value, cash, per-asset
+weights, daily %, cumulative return, drawdown, regime) — filter by move size /
+regime / direction / date range, significant up/down days highlighted, and
+downloadable to CSV.
+
+Navigation uses `st.navigation`, so the sidebar shows **9-Sig Tracker** (main)
+and **Sentinel Backtest** rather than filename-based labels.
 
 ## Architecture & extending
 

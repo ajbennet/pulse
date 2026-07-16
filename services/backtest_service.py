@@ -40,6 +40,7 @@ class BacktestResult:
     trades: pd.DataFrame
     regimes: pd.DataFrame
     annual: pd.DataFrame
+    daily: Optional[pd.DataFrame] = None       # rich per-day table
     benchmark_metrics: Optional[Dict] = None
     benchmark_equity: Optional[pd.DataFrame] = None
 
@@ -80,6 +81,29 @@ def _equity_df(equity_curve):
     return df
 
 
+def _daily_df(strat, tickers):
+    """Rich per-day table: value, cash, per-asset value/weight, returns, drawdown, regime."""
+    df = pd.DataFrame(strat.daily_rows)
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
+    pv = df["portfolio_value"]
+    df["daily_return"] = pv.pct_change().fillna(0.0)
+    df["cum_return"] = pv / pv.iloc[0] - 1.0
+    df["drawdown"] = pv / pv.cummax() - 1.0
+    df["cash_weight"] = df["cash"] / pv
+    for t in tickers:
+        col = f"{t}_value"
+        if col in df.columns:
+            df[f"{t}_weight"] = df[col] / pv
+    # Tidy column order.
+    lead = ["date", "regime", "portfolio_value", "daily_return", "cum_return",
+            "drawdown", "cash", "cash_weight"]
+    rest = [c for c in df.columns if c not in lead]
+    return df[[c for c in lead if c in df.columns] + rest].round(6)
+
+
 def run(rc: Optional[RunConfig] = None, data=None, write_csv: bool = False,
         logger=None) -> BacktestResult:
     """Run the LDR backtest (and optional benchmark) and return structured results."""
@@ -107,6 +131,7 @@ def run(rc: Optional[RunConfig] = None, data=None, write_csv: bool = False,
     )
 
     equity = _equity_df(strat.equity_curve)
+    daily = _daily_df(strat, rc.tickers)
     trades = pd.DataFrame(strat.trade_records, columns=TRADE_COLS)
     regimes = pd.DataFrame(strat.regime_records, columns=REGIME_COLS)
     annual = analyzers.annual_returns(analyzers.equity_series(strat.equity_curve))
@@ -124,8 +149,8 @@ def run(rc: Optional[RunConfig] = None, data=None, write_csv: bool = False,
         bench_equity = _equity_df(bench.equity_curve)
 
     result = BacktestResult(
-        metrics=metrics, equity=equity, trades=trades, regimes=regimes,
-        annual=annual, benchmark_metrics=bench_metrics, benchmark_equity=bench_equity,
+        metrics=metrics, equity=equity, trades=trades, regimes=regimes, annual=annual,
+        daily=daily, benchmark_metrics=bench_metrics, benchmark_equity=bench_equity,
     )
     if write_csv:
         write_outputs(result)

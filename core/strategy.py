@@ -59,6 +59,7 @@ class LDRStrategy(bt.Strategy):
         self.trades_count = 0
         self.rejected_orders = 0
         self.equity_curve = []           # list of (date, portfolio_value)
+        self.daily_rows = []             # rich per-day snapshot (value/cash/weights/regime)
         self.trade_records = []          # execution log
         self.regime_records = []         # regime-switch log
         self._pending_note = ""          # note attached to next order fill
@@ -124,8 +125,14 @@ class LDRStrategy(bt.Strategy):
         dt = self.datas[0].datetime.date(0)
         tqqq_close = float(self.tqqq.close[0])
 
-        # Record equity every bar for the daily equity curve.
-        self.equity_curve.append((dt, self.broker.getvalue()))
+        # Record equity + a rich per-day snapshot every bar.
+        total = self.broker.getvalue()
+        self.equity_curve.append((dt, total))
+        row = {"date": dt, "portfolio_value": total, "cash": self.broker.getcash(),
+               "regime": self.regime}
+        for name, feed in self.feeds.items():
+            row[f"{name}_value"] = self.broker.get_value(datas=[feed])
+        self.daily_rows.append(row)
 
         # First bar: establish the initial normal allocation.
         if not self.started:
