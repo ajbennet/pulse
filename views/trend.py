@@ -40,9 +40,13 @@ on_weights = {"TQQQ": tqqq_w, **{k: (1 - tqqq_w) * w for k, w in defensive.items
 
 if go:
     need = sorted({"TQQQ", *[t for t in defensive if t != "CASH"], *[t for t in on_weights if t != "CASH"]})
-    cl = C.load_closes(need, start)
-    if cl.empty or "TQQQ" not in cl.columns:
-        st.error("Not enough data for that start/basket.")
+    try:
+        cl = C.load_closes(need, start)
+    except Exception as e:
+        st.error(f"Couldn't load prices: {e}")
+        if st.button("🔄 Reload prices"):
+            st.cache_data.clear()
+            st.rerun()
         st.stop()
     detail = C.rotation_detail(cl, on_weights, defensive, sma_len, band=band, initial=initial)
     eq = pd.Series(detail["portfolio_value"].values, index=detail["date"])

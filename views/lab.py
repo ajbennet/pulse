@@ -52,16 +52,26 @@ with tab_cmp:
     initial = c2.number_input("Initial investment ($)", 1000, 10_000_000, 10_000, step=1000)
 
     recent = window.startswith("Recent")
+    tickers = (("TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF") if recent
+               else ("TQQQ", "AGG", "BRK-B", "UGL"))
+    start = "2020-12-01" if recent else "2010-01-01"
+    try:
+        cl = _closes(tickers, start)
+    except Exception as e:
+        st.error(f"Couldn't load prices: {e}")
+        if st.button("🔄 Reload prices", key="cmp_reload"):
+            st.cache_data.clear()
+            st.rerun()
+        st.stop()
+
     equities = {}
     if recent:
-        cl = _closes(("TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF"), "2020-12-01")
         equities["SMA150 rot (KMLM/DBMF/UGL)"] = C.sim_rotation(
             cl, {"TQQQ": 1.0}, {"KMLM": 0.3, "DBMF": 0.3, "UGL": 0.4}, 150)
         equities["SMA150 +levers (60% TQQQ)"] = C.sim_rotation(
             cl, {"TQQQ": 0.6, "KMLM": 0.2, "DBMF": 0.2}, {"KMLM": 0.3, "DBMF": 0.3, "UGL": 0.4},
             150, band=0.02)
     else:
-        cl = _closes(("TQQQ", "AGG", "BRK-B", "UGL"), "2010-01-01")
         equities["SMA150 → UGL (proxy)"] = C.sim_rotation(cl, {"TQQQ": 1.0}, {"UGL": 1.0}, 150)
         equities["SMA150 +levers (60% TQQQ)"] = C.sim_rotation(
             cl, {"TQQQ": 0.6, "UGL": 0.4}, {"UGL": 1.0}, 150, band=0.02)
@@ -120,10 +130,12 @@ with tab_lab:
 
     if st.button("▶ Run", type="primary"):
         need = [t for t in set(list(on_weights) + list(defensive)) if t != "CASH"]
-        cl = _closes(tuple(sorted(set(["TQQQ"] + need))), start)
-        if cl.empty or "TQQQ" not in cl.columns:
-            st.error("Not enough data for that start/basket (KMLM/DBMF begin ~2020-12).")
-        else:
+        try:
+            cl = _closes(tuple(sorted(set(["TQQQ"] + need))), start)
+        except Exception as e:
+            st.error(f"Couldn't load prices: {e} (KMLM/DBMF begin ~2020-12).")
+            cl = None
+        if cl is not None:
             strat_eq = C.sim_rotation(cl, on_weights, defensive, sma_len, band=band,
                                       initial=initial2)
             bh_eq = C.sim_buyhold(cl, "TQQQ", initial=initial2)

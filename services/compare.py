@@ -27,12 +27,28 @@ TRADING_DAYS = 252
 # Data
 # ----------------------------------------------------------------------
 def load_closes(tickers: List[str], start: str, end: Optional[str] = None) -> pd.DataFrame:
-    """Adjusted daily closes for the tickers, aligned on their common dates."""
-    data = yf.download(tickers, start=start, end=end, auto_adjust=True,
-                       progress=False)["Close"]
-    if isinstance(data, pd.Series):
-        data = data.to_frame(tickers[0])
-    return data.dropna(how="any")
+    """Adjusted daily closes for the tickers, aligned on their common dates.
+    Retries once on a transient/empty download; raises if a ticker never returns."""
+    last = pd.DataFrame()
+    for _ in range(2):
+        raw = yf.download(tickers, start=start, end=end, auto_adjust=True,
+                          progress=False, threads=False)
+        if raw is None or raw.empty:
+            continue
+        data = raw["Close"] if "Close" in raw.columns.get_level_values(0) else raw
+        if isinstance(data, pd.Series):
+            data = data.to_frame(tickers[0])
+        data = data.dropna(axis=1, how="all").dropna(how="any")
+        missing = [t for t in tickers if t not in data.columns]
+        if not data.empty and not missing:
+            return data
+        last = data
+    if last.empty:
+        raise RuntimeError(f"Could not download prices for {tickers} (yfinance). Try Reload.")
+    missing = [t for t in tickers if t not in last.columns]
+    if missing:
+        raise RuntimeError(f"No data returned for {missing} (yfinance). Try Reload.")
+    return last
 
 
 # ----------------------------------------------------------------------
@@ -70,7 +86,14 @@ def metrics(equity: pd.Series, rf: float = 0.0) -> Dict:
 # ----------------------------------------------------------------------
 # Simulators (each returns an equity Series, start = initial)
 # ----------------------------------------------------------------------
+def _has(closes, *tickers):
+    return (closes is not None and not closes.empty
+            and all(t in closes.columns for t in tickers) and len(closes) > 0)
+
+
 def sim_buyhold(closes: pd.DataFrame, ticker: str, initial: float = 100_000) -> pd.Series:
+    if not _has(closes, ticker):
+        return pd.Series(dtype=float)
     r = closes[ticker].pct_change().fillna(0.0)
     return initial * (1 + r).cumprod()
 
@@ -112,6 +135,8 @@ def sim_rotation(closes: pd.DataFrame, on_weights: Dict[str, float],
     an optional re-entry buffer `band`), else `off_weights`. Weights rebalanced
     daily within a regime. Signal is lagged one day (no look-ahead).
     """
+    if not _has(closes, signal_ticker):
+        return pd.Series(dtype=float)
     rets = closes.pct_change().fillna(0.0)
     on = _regime_on(closes, signal_ticker, sma_len, band)
     port = _basket_return(closes, on_weights, rets).where(
@@ -126,6 +151,8 @@ def rotation_detail(closes: pd.DataFrame, on_weights: Dict[str, float],
                     initial: float = 100_000) -> pd.DataFrame:
     """Per-day detail table for a trend rotation: regime, value, returns, drawdown,
     and the applied target weight per asset."""
+    if not _has(closes, signal_ticker):
+        return pd.DataFrame()
     rets = closes.pct_change().fillna(0.0)
     on = _regime_on(closes, signal_ticker, sma_len, band)
     port = _basket_return(closes, on_weights, rets).where(
@@ -157,6 +184,8 @@ def sim_9sig(closes: pd.DataFrame, reserve_weights: Dict[str, float], tqqq: str 
     capped at buy_cap of the reserve; sells add to the reserve. Reserve held in
     reserve_weights (summing to 1), earning their returns between rebalances.
     """
+    if not _has(closes, tqqq, *reserve_weights.keys()):
+        return pd.Series(dtype=float)
     idx = closes.index
     px = {t: closes[t].values for t in closes.columns}
     tpx = closes[tqqq].values

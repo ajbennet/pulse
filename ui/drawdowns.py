@@ -17,7 +17,11 @@ def render(key: str, closes: pd.DataFrame = None, start: str = None, end: str = 
     """Render the drawdown-episode table. Pass `closes` (already windowed) or a
     `start` (and optional `end`) to load TQQQ/UGL/BRK-B/AGG."""
     if closes is None:
-        closes = _load(("TQQQ", "UGL", "BRK-B", "AGG"), start or "2010-01-01")
+        try:
+            closes = _load(("TQQQ", "UGL", "BRK-B", "AGG"), start or "2010-01-01")
+        except Exception as e:
+            st.warning(f"Drawdown analysis unavailable (price load failed): {e}")
+            return
     if end is not None and not closes.empty:
         closes = closes[closes.index <= pd.to_datetime(end)]
 
