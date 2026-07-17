@@ -1,0 +1,9 @@
+{
+  "name": "PULSE Lite",
+  "short_name": "PULSE",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0e1117",
+  "theme_color": "#0e1117",
+  "description": "Browser-only leveraged-ETF strategy research"
+}

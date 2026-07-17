@@ -172,6 +172,24 @@ statements/workbook in the app, or copying `pulse.db` to the volume
 (`fly ssh console` + `sftp`). Render and Railway work the same way (Docker +
 a persistent disk + the `PULSE_PASSWORD` env var).
 
+### PULSE Lite — browser-only research app (no server) via GitHub Pages
+
+`docs/` is a **stlite** build that runs Streamlit **entirely in your phone's
+browser** (WebAssembly) — no server to run or maintain. It uses the committed
+`prices/` cache, so all the backtest/compare/Trend/drawdown research works
+client-side. It does **not** include the live 9-Sig tracker (that needs your
+`pulse.db` + live prices, which a browser can't fetch from Yahoo due to CORS).
+
+Enable it once:
+
+1. Push the repo (done), then GitHub → **Settings → Pages → Source: Deploy
+   from a branch → `main` / `/docs`**.
+2. Open **https://ajbennet.github.io/pulse/** on your phone → **Share → Add to
+   Home Screen** for an app icon (opens standalone).
+
+First load fetches the Python runtime (Pyodide + pandas) once, then it's cached.
+To refresh the bundled prices, update `prices/` and copy into `docs/prices/`.
+
 The main app is the **9-Sig TQQQ Tracker**, a single hub with tabs:
 
 | Tab | What it does |
