@@ -14,7 +14,6 @@ apples-to-apples drawdown/return comparison.
 """
 
 import os
-import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -23,8 +22,10 @@ import pandas as pd
 import yfinance as yf
 
 TRADING_DAYS = 252
-_PRICE_CACHE = os.path.join("data", "price_cache")
-_CACHE_TTL = 6 * 3600           # refresh cached history at most every 6h
+# Committed price cache (public market data, safe to check into git) so backtests
+# work offline and without network calls. Refreshed only when it falls behind.
+_PRICE_CACHE = "prices"
+_STALE_DAYS = 4                 # refetch only if newest cached date is older than this
 _HISTORY_START = "2005-01-01"   # cache full history per ticker, slice per request
 
 
@@ -60,8 +61,10 @@ def _cached_series(ticker: str) -> pd.Series:
             cached = pd.read_csv(path, index_col=0, parse_dates=True)["close"]
         except Exception:
             cached = None
+    # Fresh if the newest cached date is within _STALE_DAYS of today (covers
+    # weekends/holidays) — so a committed file avoids network calls entirely.
     fresh = (cached is not None and not cached.empty
-             and time.time() - os.path.getmtime(path) < _CACHE_TTL)
+             and (pd.Timestamp.now().normalize() - cached.index[-1]).days <= _STALE_DAYS)
     if fresh:
         return cached
 
@@ -70,7 +73,7 @@ def _cached_series(ticker: str) -> pd.Series:
         dl.to_frame("close").to_csv(path)
         return dl
     if cached is not None and not cached.empty:
-        return cached           # fall back to stale cache on download failure
+        return cached           # fall back to (stale) committed cache if offline
     raise RuntimeError(f"No data for {ticker} (yfinance).")
 
 
@@ -118,6 +121,7 @@ def metrics(equity: pd.Series, rf: float = 0.0) -> Dict:
         "% underwater": round(pct_underwater, 3),
         "Max underwater (days)": int(longest),
         "Final $": round(float(equity.iloc[-1]), 0),
+        "Total growth": round(float(equity.iloc[-1] / equity.iloc[0] - 1.0), 4),
     }
 
 

@@ -76,17 +76,20 @@ c[2].metric("Max drawdown", f"{m['Max DD']*100:.1f}%")
 c[3].metric("Calmar", f"{m['Calmar']:.2f}" if pd.notna(m["Calmar"]) else "—")
 
 with st.expander("Comparison vs Buy & Hold TQQQ", expanded=True):
+    def _row(a, b, kind):
+        f = {"pct": lambda v: f"{v*100:.1f}%", "money": lambda v: f"${v:,.0f}",
+             "num": lambda v: f"{v:.2f}" if pd.notna(v) else "—",
+             "growth": lambda v: f"{v*100:+,.0f}%"}[kind]
+        return (f(a), f(b))
     comp = pd.DataFrame({
-        STRAT: [m["CAGR"], m["Max DD"], m["Calmar"], m["Sharpe"], m["Final $"]],
-        "B&H TQQQ": [mbh["CAGR"], mbh["Max DD"], mbh["Calmar"], mbh["Sharpe"], mbh["Final $"]],
-    }, index=["CAGR", "Max drawdown", "Calmar", "Sharpe", "Final value"])
-    st.dataframe(comp.style.format(
-        {c_: (lambda v: f"{v:.2%}") for c_ in comp.columns},
-        subset=(["CAGR", "Max drawdown"], slice(None))).format(
-        {c_: (lambda v: f"{v:.2f}") for c_ in comp.columns},
-        subset=(["Calmar", "Sharpe"], slice(None))).format(
-        {c_: (lambda v: f"${v:,.0f}") for c_ in comp.columns},
-        subset=(["Final value"], slice(None))), use_container_width=True)
+        "CAGR": _row(m["CAGR"], mbh["CAGR"], "pct"),
+        "Max drawdown": _row(m["Max DD"], mbh["Max DD"], "pct"),
+        "Calmar": _row(m["Calmar"], mbh["Calmar"], "num"),
+        "Sharpe": _row(m["Sharpe"], mbh["Sharpe"], "num"),
+        "Final value": _row(m["Final $"], mbh["Final $"], "money"),
+        "Total growth": _row(m["Total growth"], mbh["Total growth"], "growth"),
+    }, index=[STRAT, "B&H TQQQ"]).T
+    st.dataframe(comp, use_container_width=True)
 
 chart = pd.DataFrame({STRAT: R["eq"], "B&H TQQQ": R["bh"]})
 st.subheader("Growth")
@@ -153,5 +156,5 @@ for q in sorted(view["quarter"].unique(), reverse=True):
 # ----------------------------------------------------------------------
 # Defensive assets during TQQQ drawdowns
 # ----------------------------------------------------------------------
-st.subheader("Defensive assets during TQQQ drawdowns")
-drawdowns.render("trend", start=R["start"], end=R["end"])
+st.subheader("Defensive assets during TQQQ drawdowns (2010+)")
+drawdowns.render("trend")

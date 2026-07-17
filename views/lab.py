@@ -34,6 +34,8 @@ def _fmt_metrics(mdf):
     for c in ["CAGR", "Max DD", "Vol", "% underwater"]:
         show[c] = (show[c] * 100).map(lambda v: f"{v:.1f}%")
     show["Final $"] = show["Final $"].map(lambda v: f"${v:,.0f}")
+    if "Total growth" in show.columns:
+        show["Total growth"] = (show["Total growth"] * 100).map(lambda v: f"{v:+,.0f}%")
     for c in ["Calmar", "Sharpe"]:
         show[c] = show[c].map(lambda v: f"{v:.2f}" if pd.notna(v) else "—")
     return show
@@ -52,8 +54,8 @@ with tab_cmp:
     initial = c2.number_input("Initial investment ($)", 1000, 10_000_000, 10_000, step=1000)
 
     recent = window.startswith("Recent")
-    tickers = (("TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF") if recent
-               else ("TQQQ", "AGG", "BRK-B", "UGL"))
+    tickers = (("TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF", "QQQM") if recent
+               else ("TQQQ", "AGG", "BRK-B", "UGL", "QQQ"))
     start = "2020-12-01" if recent else "2010-01-01"
     try:
         cl = _closes(tickers, start)
@@ -77,6 +79,8 @@ with tab_cmp:
             cl, {"TQQQ": 0.6, "UGL": 0.4}, {"UGL": 1.0}, 150, band=0.02)
 
     equities["B&H TQQQ"] = C.sim_buyhold(cl, "TQQQ")
+    equities["B&H QQQM" if recent else "B&H QQQ (Nasdaq-100)"] = C.sim_buyhold(
+        cl, "QQQM" if recent else "QQQ")
     equities["9-Sig (15/15 UGL/BRK.B)"] = C.sim_9sig(cl, {"UGL": 0.5, "BRK-B": 0.5})
     equities["9-Sig (30% AGG)"] = C.sim_9sig(cl, {"AGG": 1.0})
 
@@ -96,7 +100,7 @@ with tab_cmp:
                            "strategy_comparison.csv", "text/csv")
 
         st.subheader("Defensive assets during TQQQ drawdowns")
-        drawdowns.render("lab_cmp", closes=cl)
+        drawdowns.render("lab_cmp")
 
 # ======================================================================
 # Tune levers
