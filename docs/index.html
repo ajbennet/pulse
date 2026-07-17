@@ -8,14 +8,16 @@
   <meta name="apple-mobile-web-app-title" content="PULSE" />
   <meta name="theme-color" content="#0e1117" />
   <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@1.8.1/build/stlite.css" />
   <title>PULSE Lite</title>
   <style>html,body,#root{margin:0;height:100%;background:#0e1117}</style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root">Loading PULSE Lite… (first load downloads the Python runtime)</div>
   <script type="module">
     // stlite runs Streamlit fully in the browser (WebAssembly) — no server.
-    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@0.80.0/build/stlite.js";
+    // streamlit is bundled by stlite; only extra packages go in `requirements`.
+    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@1.8.1/build/stlite.js";
 
     const tickers = ["TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF", "QQQM", "QQQ"];
     const paths = ["app_lite.py", ...tickers.map(t => `prices/${t}.csv`)];
