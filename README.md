@@ -135,8 +135,42 @@ Prints a console summary and writes CSVs to `results/`.
 **Web UI (9-Sig tracker):**
 
 ```bash
-streamlit run app.py
+./run.sh              # one command: sets up venv, installs deps, launches
+# or: streamlit run app.py
 ```
+
+### Run it on your computer and phone
+
+- **Computer:** `./run.sh` and open http://localhost:8501
+- **Phone (same Wi‑Fi, computer on):** run `./run.sh` and open the **Network URL**
+  it prints (e.g. `http://192.168.x.x:8501`) on your phone.
+- **Phone, without keeping your computer on:** deploy the container to a small
+  private host (see below). It holds personal financial data, so it must be
+  **password-protected** and use a **persistent disk**.
+
+### Private hosting (mobile, always-on)
+
+The app is containerized (`Dockerfile`) and stores all personal data under the
+`PULSE_DATA_DIR` volume (default `/data`). Set a password via the
+`PULSE_PASSWORD` env var (or a Streamlit secret `password`) — with it set, the
+app shows a login gate; without it (local), there's no gate.
+
+Recommended: **Fly.io** (free allowance + a persistent volume):
+
+```bash
+brew install flyctl && fly auth login
+fly launch --no-deploy                     # detects the Dockerfile
+fly volume create pulse_data --size 1      # persistent /data
+# in fly.toml: mount pulse_data -> /data, set internal_port 8501
+fly secrets set PULSE_PASSWORD='choose-a-strong-password'
+fly deploy
+```
+
+Then open the `https://<your-app>.fly.dev` URL on your phone (add to Home
+Screen for an app-like icon). Get your data onto the host by uploading your
+statements/workbook in the app, or copying `pulse.db` to the volume
+(`fly ssh console` + `sftp`). Render and Railway work the same way (Docker +
+a persistent disk + the `PULSE_PASSWORD` env var).
 
 The main app is the **9-Sig TQQQ Tracker**, a single hub with tabs:
 

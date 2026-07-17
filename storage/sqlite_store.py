@@ -15,7 +15,10 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, List, Optional, Sequence, Tuple
 
-DEFAULT_DB = os.path.join("data", "pulse.db")
+# Data location is configurable so a hosted deploy can point at a persistent
+# volume: set PULSE_DB directly, or PULSE_DATA_DIR (defaults to ./data).
+DEFAULT_DB = os.environ.get("PULSE_DB") or os.path.join(
+    os.environ.get("PULSE_DATA_DIR", "data"), "pulse.db")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sheet_imports (

@@ -9,7 +9,7 @@ import json
 import os
 from typing import Any, Optional
 
-DEFAULT_DIR = os.path.join("data", "store")
+DEFAULT_DIR = os.path.join(os.environ.get("PULSE_DATA_DIR", "data"), "store")
 
 
 class JsonStore:
