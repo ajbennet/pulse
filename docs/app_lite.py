@@ -1,24 +1,167 @@
 """
-PULSE Lite — browser-only strategy research (stlite / WebAssembly).
+PULSE Lite — runs entirely in your phone's browser (stlite / WebAssembly).
 
-Runs entirely in the browser: no server, no live network. Reads the bundled,
-dividend-adjusted price CSVs (committed under prices/) and runs the same
-vectorized strategy math as the full app. Live prices / imports / the personal
-9-Sig tracker are NOT here (those need the server app).
+Two tabs:
+  • My 9-Sig — on-device live tracker. You enter current holding values + prices;
+    it computes the 9-Sig signal. Your data is saved ONLY in this browser
+    (localStorage) — nothing is uploaded anywhere.
+  • Research — strategy backtests/comparison from the bundled price history.
+
+No server, no live network calls (prices are entered manually to avoid browser
+CORS limits). Research only — not investment advice.
 """
+
+import json
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="PULSE Lite", page_icon="📈", layout="wide")
+st.set_page_config(page_title="PULSE", page_icon="📈", layout="wide")
 TRADING_DAYS = 252
 PRICES = "prices"
 
 
 # ----------------------------------------------------------------------
-# Data (bundled CSVs)
+# Browser-local persistence (localStorage); falls back to session for testing
 # ----------------------------------------------------------------------
+def _localstorage():
+    try:
+        import js
+        return js.localStorage
+    except Exception:
+        return None
+
+
+def save_state(key, value):
+    ls = _localstorage()
+    if ls is not None:
+        try:
+            ls.setItem(key, json.dumps(value))
+            return
+        except Exception:
+            pass
+    st.session_state[key] = value
+
+
+def load_state(key, default):
+    ls = _localstorage()
+    if ls is not None:
+        try:
+            v = ls.getItem(key)
+            if v:
+                return json.loads(v)
+        except Exception:
+            pass
+    return st.session_state.get(key, default)
+
+
+# ======================================================================
+# 9-Sig signal (pure)
+# ======================================================================
+def compute_signal(s):
+    tqqq = s["tqqq_value"]
+    reserve = s["agg_value"] + s["brkb_value"] + s["cash"]
+    total = tqqq + reserve
+    line9 = s["signal_base"] * (1 + s["growth"])
+    modified = line9 + 0.5 * s["contributions"]
+    diff = tqqq - modified
+    band = s["hold_band"] * modified
+    max_buy = s["buy_power"] * reserve
+    if diff < -band:
+        raw, action = "BUY", "BUY"
+        trade = min(abs(diff), max_buy) * s["throttle"]
+    elif diff > band:
+        raw, action, trade = "SELL", "SELL", abs(diff) * s["throttle"]
+    else:
+        raw, action, trade = "HOLD", "HOLD", 0.0
+    px = s.get("tqqq_price", 0.0)
+    return {
+        "tqqq": tqqq, "reserve": reserve, "total": total,
+        "tqqq_alloc": tqqq / total if total else 0.0,
+        "reserve_alloc": reserve / total if total else 0.0,
+        "line9": line9, "modified": modified, "difference": diff, "band": band,
+        "raw": raw, "action": action, "trade": trade, "max_buy": max_buy,
+        "shares": (trade / px) if px else 0.0,
+        "reserve_warn": (reserve / total if total else 0.0) < s["min_reserve"],
+        "capped": raw == "BUY" and abs(diff) > max_buy,
+    }
+
+
+def render_tracker():
+    st.subheader("My 9-Sig — on-device tracker")
+    st.caption("Saved only in this browser (localStorage). Enter your current values; "
+               "for a quarterly strategy, prices don't need to be real-time.")
+
+    d = load_state("ninesig", {
+        "tqqq_value": 0.0, "agg_value": 0.0, "brkb_value": 0.0, "cash": 0.0,
+        "tqqq_price": 0.0, "signal_base": 230000.0, "contributions": 0.0,
+        "growth": 0.09, "hold_band": 0.01, "throttle": 1.0, "buy_power": 0.90,
+        "min_reserve": 0.10,
+    })
+
+    c = st.columns(4)
+    d["tqqq_value"] = c[0].number_input("TQQQ value ($)", value=float(d["tqqq_value"]), step=100.0)
+    d["agg_value"] = c[1].number_input("AGG value ($)", value=float(d["agg_value"]), step=100.0)
+    d["brkb_value"] = c[2].number_input("BRK.B value ($)", value=float(d["brkb_value"]), step=100.0)
+    d["cash"] = c[3].number_input("Cash ($)", value=float(d["cash"]), step=100.0)
+    c2 = st.columns(4)
+    d["signal_base"] = c2[0].number_input("Signal base ($)", value=float(d["signal_base"]), step=1000.0,
+                                          help="Prior quarter's TQQQ target; grows 9%/quarter.")
+    d["contributions"] = c2[1].number_input("Contributions this qtr ($)", value=float(d["contributions"]),
+                                            step=100.0)
+    d["tqqq_price"] = c2[2].number_input("TQQQ price ($)", value=float(d["tqqq_price"]), step=0.01,
+                                         help="Only used to convert the trade $ into shares.")
+    with c2[3]:
+        st.write("")
+        st.write("")
+        if st.button("💾 Save", use_container_width=True):
+            save_state("ninesig", d)
+            st.toast("Saved to this browser.")
+
+    with st.expander("Advanced settings"):
+        e = st.columns(5)
+        d["growth"] = e[0].number_input("Growth/qtr", value=float(d["growth"]), step=0.01, format="%.2f")
+        d["hold_band"] = e[1].number_input("Hold band", value=float(d["hold_band"]), step=0.01, format="%.2f")
+        d["throttle"] = e[2].number_input("Throttle", value=float(d["throttle"]), step=0.05, format="%.2f")
+        d["buy_power"] = e[3].number_input("Buy-power cap", value=float(d["buy_power"]), step=0.05, format="%.2f")
+        d["min_reserve"] = e[4].number_input("Min reserve", value=float(d["min_reserve"]), step=0.05, format="%.2f")
+
+    save_state("ninesig", d)   # auto-persist latest entries
+    sig = compute_signal(d)
+
+    m = st.columns(4)
+    m[0].metric("Total value", f"${sig['total']:,.0f}")
+    m[1].metric("TQQQ", f"${sig['tqqq']:,.0f}", f"{sig['tqqq_alloc']:.1%} (target 70%)")
+    m[2].metric("Reserve", f"${sig['reserve']:,.0f}", f"{sig['reserve_alloc']:.1%} (target 30%)")
+    m[3].metric("9% signal line", f"${sig['modified']:,.0f}")
+
+    banner = {"BUY": st.success, "SELL": st.warning}.get(sig["raw"], st.info)
+    if sig["trade"]:
+        extra = f" (~{sig['shares']:.2f} TQQQ shares)" if sig["shares"] else ""
+        banner(f"### {sig['action']} ${sig['trade']:,.0f}{extra}")
+    else:
+        banner(f"### {sig['action']} — within the {d['hold_band']:.0%} band, no trade")
+
+    notes = []
+    if sig["capped"]:
+        notes.append(f"Buy capped by {d['buy_power']:.0%} of reserve (${sig['max_buy']:,.0f}).")
+    if sig["reserve_warn"]:
+        st.error(f"🔴 Reserve {sig['reserve_alloc']:.1%} is below the {d['min_reserve']:.0%} minimum — "
+                 "buying power is limited.")
+    st.caption(f"TQQQ − signal line = ${sig['difference']:,.0f}. " + " ".join(notes))
+
+    if st.button("📅 Close quarter (roll signal base → this quarter's line)"):
+        d["signal_base"] = sig["modified"]
+        d["contributions"] = 0.0
+        save_state("ninesig", d)
+        st.success(f"New signal base: ${d['signal_base']:,.0f}")
+        st.rerun()
+
+
+# ======================================================================
+# Research (bundled price history)
+# ======================================================================
 @st.cache_data
 def _series(ticker):
     df = pd.read_csv(f"{PRICES}/{ticker}.csv", index_col=0, parse_dates=True)
@@ -28,25 +171,19 @@ def _series(ticker):
 
 
 def load(tickers, start):
-    data = {t: _series(t) for t in tickers}
-    df = pd.DataFrame(data)
+    df = pd.DataFrame({t: _series(t) for t in tickers})
     df = df[df.index >= pd.to_datetime(start)]
     return df.dropna(how="any")
 
 
-# ----------------------------------------------------------------------
-# Metrics + simulators (pure pandas/numpy — Pyodide-safe)
-# ----------------------------------------------------------------------
 def metrics(equity):
     equity = equity.dropna()
     ret = equity.pct_change().dropna()
     years = (equity.index[-1] - equity.index[0]).days / 365.25
     cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1 if years > 0 else 0.0
-    dd = equity / equity.cummax() - 1.0
-    max_dd = float(dd.min())
+    dd = float((equity / equity.cummax() - 1.0).min())
     sharpe = float(ret.mean() / ret.std() * np.sqrt(TRADING_DAYS)) if ret.std() else 0.0
-    return {"CAGR": cagr, "Max DD": max_dd,
-            "Calmar": (cagr / abs(max_dd)) if max_dd else float("nan"),
+    return {"CAGR": cagr, "Max DD": dd, "Calmar": (cagr / abs(dd)) if dd else float("nan"),
             "Sharpe": sharpe, "Final $": float(equity.iloc[-1]),
             "Total growth": float(equity.iloc[-1] / equity.iloc[0] - 1.0)}
 
@@ -62,19 +199,19 @@ def _basket(closes, weights, rets):
 def _regime_on(closes, sig, sma_len, band):
     price, sma = closes[sig], closes[sig].rolling(sma_len).mean()
     state, states = False, []
-    for p, s in zip(price.values, sma.values):
-        if np.isnan(s):
+    for p, sv in zip(price.values, sma.values):
+        if np.isnan(sv):
             states.append(False)
             continue
-        if not state and p > s * (1 + band):
+        if not state and p > sv * (1 + band):
             state = True
-        elif state and p < s:
+        elif state and p < sv:
             state = False
         states.append(state)
     return pd.Series(states, index=closes.index).shift(1).fillna(False)
 
 
-def sim_buyhold(closes, ticker, initial=10000):
+def sim_buyhold(closes, ticker, initial):
     return initial * (1 + closes[ticker].pct_change().fillna(0.0)).cumprod()
 
 
@@ -115,96 +252,46 @@ def sim_9sig(closes, reserve_w, tqqq="TQQQ", tqqq_w=0.70, growth=0.09, buy_cap=0
     return pd.Series(eq, index=idx)
 
 
-def drawdown_episodes(closes, base="TQQQ", defensive=("UGL", "BRK-B", "AGG"), min_depth=0.30):
-    if base not in closes.columns:
-        return pd.DataFrame()
-    px = closes[base].dropna()
-    defensive = [d for d in defensive if d in closes.columns]
-    peak_p = tr_p = px.iloc[0]
-    peak_d = tr_d = px.index[0]
-    eps = []
+def render_research():
+    st.subheader("Strategy research")
+    c1, c2 = st.columns(2)
+    window = c1.radio("Window", ["Recent (2021+)", "Long (2010+)"], index=0, horizontal=True)
+    initial = c2.number_input("Initial ($)", 1000, 10_000_000, 10_000, step=1000, key="res_init")
+    recent = window.startswith("Recent")
+    if recent:
+        cl = load(["TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF", "QQQM"], "2020-12-01")
+        eq = {"SMA150 rot (KMLM/DBMF/UGL)": sim_rotation(cl, {"TQQQ": 1.0}, {"KMLM": .3, "DBMF": .3, "UGL": .4}, initial=initial),
+              "SMA150 +levers": sim_rotation(cl, {"TQQQ": .6, "KMLM": .2, "DBMF": .2}, {"KMLM": .3, "DBMF": .3, "UGL": .4}, band=0.02, initial=initial),
+              "B&H QQQM": sim_buyhold(cl, "QQQM", initial)}
+    else:
+        cl = load(["TQQQ", "AGG", "BRK-B", "UGL", "QQQ"], "2010-01-01")
+        eq = {"SMA150 → UGL": sim_rotation(cl, {"TQQQ": 1.0}, {"UGL": 1.0}, initial=initial),
+              "SMA150 +levers": sim_rotation(cl, {"TQQQ": .6, "UGL": .4}, {"UGL": 1.0}, band=0.02, initial=initial),
+              "B&H QQQ": sim_buyhold(cl, "QQQ", initial)}
+    eq["B&H TQQQ"] = sim_buyhold(cl, "TQQQ", initial)
+    eq["9-Sig (15/15 UGL/BRK.B)"] = sim_9sig(cl, {"UGL": .5, "BRK-B": .5}, initial=initial)
+    eq["9-Sig (30% AGG)"] = sim_9sig(cl, {"AGG": 1.0}, initial=initial)
 
-    def leg(pd_, td_, rec):
-        row = {"Peak": pd_.date().isoformat(), "Trough": td_.date().isoformat(),
-               "Recovery": rec, f"{base} DD": px.loc[td_] / px.loc[pd_] - 1.0}
-        for a in defensive:
-            try:
-                row[a] = closes.loc[td_, a] / closes.loc[pd_, a] - 1.0
-            except KeyError:
-                row[a] = None
-        return row
-
-    for d, p in px.items():
-        if p > peak_p:
-            if tr_p / peak_p - 1.0 <= -min_depth:
-                eps.append(leg(peak_d, tr_d, d.date().isoformat()))
-            peak_p = tr_p = p
-            peak_d = tr_d = d
-        elif p < tr_p:
-            tr_p, tr_d = p, d
-    if tr_p / peak_p - 1.0 <= -min_depth:
-        eps.append(leg(peak_d, tr_d, "ongoing"))
-    df = pd.DataFrame(eps)
-    if not df.empty:
-        df["Best hedge"] = df.apply(
-            lambda r: max({a: r[a] for a in defensive if pd.notna(r.get(a))} or {"—": 0},
-                          key=lambda k: {a: r[a] for a in defensive if pd.notna(r.get(a))}.get(k, -9)),
-            axis=1)
-    return df
+    eqdf = pd.DataFrame(eq).dropna(how="any")
+    eqdf = eqdf / eqdf.iloc[0] * initial
+    mdf = pd.DataFrame({n: metrics(eqdf[n]) for n in eqdf.columns}).T.sort_values("Calmar", ascending=False)
+    show = mdf.copy()
+    for col in ["CAGR", "Max DD"]:
+        show[col] = (show[col] * 100).map(lambda v: f"{v:.1f}%")
+    show["Total growth"] = (show["Total growth"] * 100).map(lambda v: f"{v:+,.0f}%")
+    show["Final $"] = show["Final $"].map(lambda v: f"${v:,.0f}")
+    for col in ["Calmar", "Sharpe"]:
+        show[col] = show[col].map(lambda v: f"{v:.2f}" if pd.notna(v) else "—")
+    st.caption(f"{eqdf.index[0].date()} → {eqdf.index[-1].date()} · rebased to ${initial:,.0f}")
+    st.dataframe(show, use_container_width=True)
+    st.line_chart(eqdf, height=300)
+    st.area_chart(eqdf / eqdf.cummax() - 1.0, height=220)
 
 
-# ----------------------------------------------------------------------
-# UI
-# ----------------------------------------------------------------------
-st.title("📈 PULSE Lite")
-st.caption("Browser-only strategy research (no server, no live data). Uses bundled "
-           "historical prices. Research only — not investment advice.")
-
-c1, c2 = st.columns(2)
-window = c1.radio("Window", ["Recent (2021+, incl KMLM/DBMF)", "Long (2010+)"], index=0)
-initial = c2.number_input("Initial investment ($)", 1000, 10_000_000, 10_000, step=1000)
-recent = window.startswith("Recent")
-
-if recent:
-    cl = load(["TQQQ", "AGG", "BRK-B", "UGL", "KMLM", "DBMF", "QQQM"], "2020-12-01")
-    eq = {
-        "SMA150 rot (KMLM/DBMF/UGL)": sim_rotation(cl, {"TQQQ": 1.0}, {"KMLM": .3, "DBMF": .3, "UGL": .4}, initial=initial),
-        "SMA150 +levers (60% TQQQ)": sim_rotation(cl, {"TQQQ": .6, "KMLM": .2, "DBMF": .2}, {"KMLM": .3, "DBMF": .3, "UGL": .4}, band=0.02, initial=initial),
-        "B&H QQQM": sim_buyhold(cl, "QQQM", initial),
-    }
-else:
-    cl = load(["TQQQ", "AGG", "BRK-B", "UGL", "QQQ"], "2010-01-01")
-    eq = {
-        "SMA150 → UGL (proxy)": sim_rotation(cl, {"TQQQ": 1.0}, {"UGL": 1.0}, initial=initial),
-        "SMA150 +levers (60% TQQQ)": sim_rotation(cl, {"TQQQ": .6, "UGL": .4}, {"UGL": 1.0}, band=0.02, initial=initial),
-        "B&H QQQ (Nasdaq-100)": sim_buyhold(cl, "QQQ", initial),
-    }
-eq["B&H TQQQ"] = sim_buyhold(cl, "TQQQ", initial)
-eq["9-Sig (15/15 UGL/BRK.B)"] = sim_9sig(cl, {"UGL": .5, "BRK-B": .5}, initial=initial)
-eq["9-Sig (30% AGG)"] = sim_9sig(cl, {"AGG": 1.0}, initial=initial)
-
-eqdf = pd.DataFrame(eq).dropna(how="any")
-eqdf = eqdf / eqdf.iloc[0] * initial
-mdf = pd.DataFrame({n: metrics(eqdf[n]) for n in eqdf.columns}).T.sort_values("Calmar", ascending=False)
-
-show = mdf.copy()
-for c in ["CAGR", "Max DD"]:
-    show[c] = (show[c] * 100).map(lambda v: f"{v:.1f}%")
-show["Total growth"] = (show["Total growth"] * 100).map(lambda v: f"{v:+,.0f}%")
-show["Final $"] = show["Final $"].map(lambda v: f"${v:,.0f}")
-for c in ["Calmar", "Sharpe"]:
-    show[c] = show[c].map(lambda v: f"{v:.2f}" if pd.notna(v) else "—")
-
-st.caption(f"Window {eqdf.index[0].date()} → {eqdf.index[-1].date()} · rebased to ${initial:,.0f}")
-st.dataframe(show, use_container_width=True)
-st.subheader("Growth")
-st.line_chart(eqdf, height=320)
-st.subheader("Drawdown")
-st.area_chart(eqdf / eqdf.cummax() - 1.0, height=240)
-
-st.subheader("Defensives during TQQQ drawdowns (2010+)")
-dd_all = load(["TQQQ", "UGL", "BRK-B", "AGG"], "2010-01-01")
-ep = drawdown_episodes(dd_all, min_depth=0.30)
-if not ep.empty:
-    fmt = {c: "{:+.1%}" for c in ["TQQQ DD", "UGL", "BRK-B", "AGG"] if c in ep.columns}
-    st.dataframe(ep.style.format(fmt, na_rep="—"), use_container_width=True, hide_index=True)
+# ======================================================================
+st.title("📈 PULSE")
+tab_track, tab_research = st.tabs(["📊 My 9-Sig", "🔬 Research"])
+with tab_track:
+    render_tracker()
+with tab_research:
+    render_research()
