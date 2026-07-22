@@ -17,9 +17,26 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+# Enable synchronous HTTP from Python in the browser (stlite runs in a Web
+# Worker where sync XHR is allowed). No-op outside the browser.
+try:
+    import pyodide_http
+    pyodide_http.patch_all()
+except Exception:
+    pass
+
 st.set_page_config(page_title="PULSE", page_icon="📈", layout="wide")
 TRADING_DAYS = 252
 PRICES = "prices"
+
+
+def fetch_quote(symbol, api_key):
+    """Current price via Finnhub (CORS-enabled, free key). Works in-browser."""
+    import requests
+    r = requests.get("https://finnhub.io/api/v1/quote",
+                     params={"symbol": symbol, "token": api_key}, timeout=15)
+    r.raise_for_status()
+    return float(r.json().get("c") or 0.0)
 
 
 # ----------------------------------------------------------------------
@@ -90,42 +107,85 @@ def compute_signal(s):
 
 def render_tracker():
     st.subheader("My 9-Sig — on-device tracker")
-    st.caption("Saved only in this browser (localStorage). Enter your current values; "
-               "for a quarterly strategy, prices don't need to be real-time.")
+    st.caption("Saved only in this browser (localStorage) — nothing is uploaded. "
+               "Enter shares + prices; value = shares × price.")
 
     d = load_state("ninesig", {
-        "tqqq_value": 0.0, "agg_value": 0.0, "brkb_value": 0.0, "cash": 0.0,
-        "tqqq_price": 0.0, "signal_base": 230000.0, "contributions": 0.0,
+        "tqqq_shares": 0.0, "agg_shares": 0.0, "brkb_shares": 0.0, "cash": 0.0,
+        "tqqq_price": 0.0, "agg_price": 0.0, "brkb_price": 0.0,
+        "signal_base": 230000.0, "contributions": 0.0,
         "growth": 0.09, "hold_band": 0.01, "throttle": 1.0, "buy_power": 0.90,
-        "min_reserve": 0.10,
+        "min_reserve": 0.10, "finnhub_key": "",
     })
+    d.setdefault("agg_price", 0.0)
+    d.setdefault("brkb_price", 0.0)
 
+    st.markdown("**Holdings (shares)**")
     c = st.columns(4)
-    d["tqqq_value"] = c[0].number_input("TQQQ value ($)", value=float(d["tqqq_value"]), step=100.0)
-    d["agg_value"] = c[1].number_input("AGG value ($)", value=float(d["agg_value"]), step=100.0)
-    d["brkb_value"] = c[2].number_input("BRK.B value ($)", value=float(d["brkb_value"]), step=100.0)
+    d["tqqq_shares"] = c[0].number_input("TQQQ shares", value=float(d.get("tqqq_shares", 0.0)), step=1.0)
+    d["agg_shares"] = c[1].number_input("AGG shares", value=float(d.get("agg_shares", 0.0)), step=1.0)
+    d["brkb_shares"] = c[2].number_input("BRK.B shares", value=float(d.get("brkb_shares", 0.0)), step=1.0)
     d["cash"] = c[3].number_input("Cash ($)", value=float(d["cash"]), step=100.0)
-    c2 = st.columns(4)
-    d["signal_base"] = c2[0].number_input("Signal base ($)", value=float(d["signal_base"]), step=1000.0,
-                                          help="Prior quarter's TQQQ target; grows 9%/quarter.")
-    d["contributions"] = c2[1].number_input("Contributions this qtr ($)", value=float(d["contributions"]),
-                                            step=100.0)
-    d["tqqq_price"] = c2[2].number_input("TQQQ price ($)", value=float(d["tqqq_price"]), step=0.01,
-                                         help="Only used to convert the trade $ into shares.")
-    with c2[3]:
-        st.write("")
-        st.write("")
-        if st.button("💾 Save", use_container_width=True):
-            save_state("ninesig", d)
-            st.toast("Saved to this browser.")
 
-    with st.expander("Advanced settings"):
+    st.markdown("**Prices**")
+    p = st.columns(4)
+    d["tqqq_price"] = p[0].number_input("TQQQ price ($)", value=float(d["tqqq_price"]), step=0.01)
+    d["agg_price"] = p[1].number_input("AGG price ($)", value=float(d["agg_price"]), step=0.01)
+    d["brkb_price"] = p[2].number_input("BRK.B price ($)", value=float(d["brkb_price"]), step=0.01)
+    with p[3]:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Fetch live", use_container_width=True):
+            key = (d.get("finnhub_key") or "").strip()
+            if not key:
+                st.warning("Add a free Finnhub API key below first.")
+            else:
+                try:
+                    d["tqqq_price"] = fetch_quote("TQQQ", key)
+                    d["agg_price"] = fetch_quote("AGG", key)
+                    d["brkb_price"] = fetch_quote("BRK.B", key)
+                    save_state("ninesig", d)
+                    st.success("Prices updated.")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Fetch failed: {ex}")
+
+    b = st.columns(2)
+    d["signal_base"] = b[0].number_input("Signal base ($)", value=float(d["signal_base"]), step=1000.0,
+                                         help="Prior quarter's TQQQ target; grows 9%/quarter.")
+    d["contributions"] = b[1].number_input("Contributions this qtr ($)", value=float(d["contributions"]),
+                                           step=100.0)
+
+    with st.expander("Live prices, backup & advanced"):
+        d["finnhub_key"] = st.text_input(
+            "Finnhub API key (free at finnhub.io)", value=d.get("finnhub_key", ""), type="password",
+            help="Stored only in this browser. Enables the 🔄 Fetch live button.")
+        st.markdown("**Backup / move devices**")
+        bcol = st.columns(2)
+        bcol[0].download_button("⬇ Export data (JSON)", json.dumps(d, indent=2),
+                                "pulse_9sig.json", "application/json", use_container_width=True)
+        up = bcol[1].file_uploader("Import data (JSON)", type=["json"])
+        if up is not None:
+            try:
+                incoming = json.loads(up.getvalue().decode("utf-8"))
+                d.update(incoming)
+                save_state("ninesig", d)
+                st.success("Imported. Reloading…")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Import failed: {ex}")
+        st.markdown("**Strategy settings**")
         e = st.columns(5)
         d["growth"] = e[0].number_input("Growth/qtr", value=float(d["growth"]), step=0.01, format="%.2f")
         d["hold_band"] = e[1].number_input("Hold band", value=float(d["hold_band"]), step=0.01, format="%.2f")
         d["throttle"] = e[2].number_input("Throttle", value=float(d["throttle"]), step=0.05, format="%.2f")
         d["buy_power"] = e[3].number_input("Buy-power cap", value=float(d["buy_power"]), step=0.05, format="%.2f")
         d["min_reserve"] = e[4].number_input("Min reserve", value=float(d["min_reserve"]), step=0.05, format="%.2f")
+
+    # value = shares × price
+    d["tqqq_value"] = d["tqqq_shares"] * d["tqqq_price"]
+    d["agg_value"] = d["agg_shares"] * d["agg_price"]
+    d["brkb_value"] = d["brkb_shares"] * d["brkb_price"]
 
     save_state("ninesig", d)   # auto-persist latest entries
     sig = compute_signal(d)

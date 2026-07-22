@@ -28,7 +28,8 @@
     }));
 
     mount(
-      { requirements: ["pandas", "numpy"], entrypoint: "app_lite.py", files },
+      { requirements: ["pandas", "numpy", "requests", "pyodide-http"],
+        entrypoint: "app_lite.py", files },
       document.getElementById("root")
     );
   </script>
