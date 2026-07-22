@@ -50,27 +50,77 @@ def _localstorage():
         return None
 
 
-def save_state(key, value):
-    ls = _localstorage()
-    if ls is not None:
-        try:
-            ls.setItem(key, json.dumps(value))
-            return
-        except Exception:
-            pass
-    st.session_state[key] = value
-
-
-def load_state(key, default):
+def ls_get(key):
     ls = _localstorage()
     if ls is not None:
         try:
             v = ls.getItem(key)
-            if v:
-                return json.loads(v)
+            return v if v else None
+        except Exception:
+            return None
+    return st.session_state.get("_ls_" + key)
+
+
+def ls_set(key, val):
+    ls = _localstorage()
+    if ls is not None:
+        try:
+            ls.setItem(key, val)
+            return
         except Exception:
             pass
-    return st.session_state.get(key, default)
+    st.session_state["_ls_" + key] = val
+
+
+def ls_del(key):
+    ls = _localstorage()
+    if ls is not None:
+        try:
+            ls.removeItem(key)
+        except Exception:
+            pass
+    st.session_state.pop("_ls_" + key, None)
+
+
+# ----------------------------------------------------------------------
+# Password-based encryption (Fernet + PBKDF2). Data is encrypted in the
+# browser with your password; the password never leaves the device.
+# ----------------------------------------------------------------------
+try:
+    import base64 as _b64
+    import os as _os
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    CRYPTO_OK = True
+except Exception:
+    CRYPTO_OK = False
+
+
+def _fernet(password, salt):
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=200_000)
+    return Fernet(_b64.urlsafe_b64encode(kdf.derive(password.encode())))
+
+
+def encrypt_state(state, password):
+    salt = _os.urandom(16)
+    token = _fernet(password, salt).encrypt(json.dumps(state).encode())
+    return _b64.b64encode(salt).decode() + ":" + token.decode()
+
+
+def decrypt_state(blob, password):
+    salt_b64, token = blob.split(":", 1)
+    return json.loads(_fernet(password, _b64.b64decode(salt_b64)).decrypt(token.encode()).decode())
+
+
+def default_state():
+    return {
+        "tqqq_shares": 0.0, "agg_shares": 0.0, "brkb_shares": 0.0, "cash": 0.0,
+        "tqqq_price": 0.0, "agg_price": 0.0, "brkb_price": 0.0,
+        "signal_base": 230000.0, "contributions": 0.0,
+        "growth": 0.09, "hold_band": 0.01, "throttle": 1.0, "buy_power": 0.90,
+        "min_reserve": 0.10, "finnhub_key": "", "last_backup": None,
+    }
 
 
 # ======================================================================
@@ -107,24 +157,79 @@ def compute_signal(s):
 
 def render_tracker():
     st.subheader("My 9-Sig — on-device tracker")
-    st.caption("Saved only in this browser (localStorage) — nothing is uploaded. "
-               "Enter shares + prices; value = shares × price.")
+    if not CRYPTO_OK:
+        st.error("Secure-storage library didn't load — reload the page. Running in "
+                 "session-only mode (nothing is saved).")
+        st.session_state.setdefault("state", default_state())
+        _tracker_body(st.session_state["state"], lambda d: None)
+        return
+    if "pw" not in st.session_state:
+        _render_unlock(ls_get("ninesig_enc"))
+        return
+    _tracker_body(st.session_state["state"],
+                  lambda d: ls_set("ninesig_enc", encrypt_state(d, st.session_state["pw"])))
 
-    d = load_state("ninesig", {
-        "tqqq_shares": 0.0, "agg_shares": 0.0, "brkb_shares": 0.0, "cash": 0.0,
-        "tqqq_price": 0.0, "agg_price": 0.0, "brkb_price": 0.0,
-        "signal_base": 230000.0, "contributions": 0.0,
-        "growth": 0.09, "hold_band": 0.01, "throttle": 1.0, "buy_power": 0.90,
-        "min_reserve": 0.10, "finnhub_key": "",
-    })
-    d.setdefault("agg_price", 0.0)
-    d.setdefault("brkb_price", 0.0)
+
+def _render_unlock(enc):
+    st.caption("🔒 Your data is encrypted in this browser with your password. It never "
+               "leaves your device and can't be recovered if lost — keep it safe.")
+    pw = st.text_input("Password", type="password", key="pw_input")
+    if enc is None:
+        st.info("First time — set a password to protect your data. You can import a "
+                "starting file below (e.g. your prefilled seed).")
+        seed = st.file_uploader("Optional: import a starting data file (JSON)", type=["json"])
+        if st.button("Set password & start", type="primary"):
+            if len(pw) < 6:
+                st.error("Use at least 6 characters.")
+                return
+            state = default_state()
+            legacy = ls_get("ninesig")            # migrate old plaintext data if present
+            for src in (legacy,):
+                if src:
+                    try:
+                        state.update(json.loads(src))
+                    except Exception:
+                        pass
+            if seed is not None:
+                try:
+                    state.update(json.loads(seed.getvalue().decode("utf-8")))
+                except Exception as ex:
+                    st.error(f"Seed import failed: {ex}")
+                    return
+            st.session_state["pw"] = pw
+            st.session_state["state"] = state
+            ls_set("ninesig_enc", encrypt_state(state, pw))
+            ls_del("ninesig")
+            st.rerun()
+    elif st.button("Unlock", type="primary"):
+        try:
+            st.session_state["state"] = decrypt_state(enc, pw)
+            st.session_state["pw"] = pw
+            st.rerun()
+        except Exception:
+            st.error("Wrong password.")
+
+
+def _tracker_body(d, persist):
+    for k, v in default_state().items():
+        d.setdefault(k, v)
+    st.caption("Encrypted on this device. Enter shares + prices; value = shares × price.")
+
+    lb = d.get("last_backup")
+    if lb:
+        try:
+            days = (pd.Timestamp.now().normalize() - pd.to_datetime(lb)).days
+            if days >= 30:
+                st.warning(f"⚠️ Last backup was {days} days ago — export an encrypted backup below "
+                           "and keep it in your Google Drive.")
+        except Exception:
+            pass
 
     st.markdown("**Holdings (shares)**")
     c = st.columns(4)
-    d["tqqq_shares"] = c[0].number_input("TQQQ shares", value=float(d.get("tqqq_shares", 0.0)), step=1.0)
-    d["agg_shares"] = c[1].number_input("AGG shares", value=float(d.get("agg_shares", 0.0)), step=1.0)
-    d["brkb_shares"] = c[2].number_input("BRK.B shares", value=float(d.get("brkb_shares", 0.0)), step=1.0)
+    d["tqqq_shares"] = c[0].number_input("TQQQ shares", value=float(d["tqqq_shares"]), step=1.0)
+    d["agg_shares"] = c[1].number_input("AGG shares", value=float(d["agg_shares"]), step=1.0)
+    d["brkb_shares"] = c[2].number_input("BRK.B shares", value=float(d["brkb_shares"]), step=1.0)
     d["cash"] = c[3].number_input("Cash ($)", value=float(d["cash"]), step=100.0)
 
     st.markdown("**Prices**")
@@ -144,7 +249,7 @@ def render_tracker():
                     d["tqqq_price"] = fetch_quote("TQQQ", key)
                     d["agg_price"] = fetch_quote("AGG", key)
                     d["brkb_price"] = fetch_quote("BRK.B", key)
-                    save_state("ninesig", d)
+                    persist(d)
                     st.success("Prices updated.")
                     st.rerun()
                 except Exception as ex:
@@ -157,23 +262,35 @@ def render_tracker():
                                            step=100.0)
 
     with st.expander("Live prices, backup & advanced"):
-        d["finnhub_key"] = st.text_input(
-            "Finnhub API key (free at finnhub.io)", value=d.get("finnhub_key", ""), type="password",
-            help="Stored only in this browser. Enables the 🔄 Fetch live button.")
-        st.markdown("**Backup / move devices**")
+        d["finnhub_key"] = st.text_input("Finnhub API key (free at finnhub.io)",
+                                         value=d.get("finnhub_key", ""), type="password",
+                                         help="Stored encrypted in this browser.")
+        st.markdown("**Encrypted backup — keep this file in your Google Drive**")
+        blob = encrypt_state(d, st.session_state["pw"]) if st.session_state.get("pw") else ""
         bcol = st.columns(2)
-        bcol[0].download_button("⬇ Export data (JSON)", json.dumps(d, indent=2),
-                                "pulse_9sig.json", "application/json", use_container_width=True)
-        up = bcol[1].file_uploader("Import data (JSON)", type=["json"])
+        if bcol[0].download_button("⬇ Export encrypted backup", blob or "locked",
+                                   "pulse_9sig.enc", "text/plain", use_container_width=True,
+                                   disabled=not blob):
+            d["last_backup"] = pd.Timestamp.now().normalize().isoformat()
+            persist(d)
+        up = bcol[1].file_uploader("Restore backup (.enc / .json)", type=["enc", "json", "txt"])
         if up is not None:
+            raw = up.getvalue().decode("utf-8")
+            loaded = None
             try:
-                incoming = json.loads(up.getvalue().decode("utf-8"))
-                d.update(incoming)
-                save_state("ninesig", d)
-                st.success("Imported. Reloading…")
+                loaded = decrypt_state(raw, st.session_state.get("pw", ""))
+            except Exception:
+                try:
+                    loaded = json.loads(raw)
+                except Exception:
+                    loaded = None
+            if loaded:
+                d.update(loaded)
+                persist(d)
+                st.success("Restored. Reloading…")
                 st.rerun()
-            except Exception as ex:
-                st.error(f"Import failed: {ex}")
+            else:
+                st.error("Couldn't read that file (wrong password or bad format).")
         st.markdown("**Strategy settings**")
         e = st.columns(5)
         d["growth"] = e[0].number_input("Growth/qtr", value=float(d["growth"]), step=0.01, format="%.2f")
@@ -181,13 +298,12 @@ def render_tracker():
         d["throttle"] = e[2].number_input("Throttle", value=float(d["throttle"]), step=0.05, format="%.2f")
         d["buy_power"] = e[3].number_input("Buy-power cap", value=float(d["buy_power"]), step=0.05, format="%.2f")
         d["min_reserve"] = e[4].number_input("Min reserve", value=float(d["min_reserve"]), step=0.05, format="%.2f")
+        st.caption("💡 Fully-automatic one-click push to Google Drive needs Google OAuth — ask to enable.")
 
-    # value = shares × price
     d["tqqq_value"] = d["tqqq_shares"] * d["tqqq_price"]
     d["agg_value"] = d["agg_shares"] * d["agg_price"]
     d["brkb_value"] = d["brkb_shares"] * d["brkb_price"]
-
-    save_state("ninesig", d)   # auto-persist latest entries
+    persist(d)
     sig = compute_signal(d)
 
     m = st.columns(4)
@@ -214,7 +330,7 @@ def render_tracker():
     if st.button("📅 Close quarter (roll signal base → this quarter's line)"):
         d["signal_base"] = sig["modified"]
         d["contributions"] = 0.0
-        save_state("ninesig", d)
+        persist(d)
         st.success(f"New signal base: ${d['signal_base']:,.0f}")
         st.rerun()
 
